@@ -1,18 +1,22 @@
 #ifndef FUNCTIONS_H
 #define FUNCTIONS_H
 
+<<<<<<< HEAD
 // Forward declaration to avoid circular dependency
 struct AppState;
 
 /*
  * Represents the current state of the audio player.
  */
+=======
+>>>>>>> 90c055f (Add audioplayer source files)
 typedef enum {
 	PLAYER_STOPPED,
 	PLAYER_PLAYING,
 	PLAYER_PAUSED
 } PlayerStatus;
 
+<<<<<<< HEAD
 /**
  * @brief Initializes the audio player.
  */
@@ -66,6 +70,18 @@ double player_get_current_position(void);
 /**
  * @brief Get the duration of an MP3 file in seconds.
  */
+=======
+int player_init(void);
+void player_shutdown(void);
+int player_load_file(const char *filename);
+void player_play(void);
+void player_set_volume(int volume);
+void player_pause_toggle(void);
+void player_stop(void);
+int player_is_playing(void);
+PlayerStatus player_get_status(void);
+double player_get_current_position(void);
+>>>>>>> 90c055f (Add audioplayer source files)
 double get_mp3_duration(const char *filename);
 
 #endif /* FUNCTIONS_H */
