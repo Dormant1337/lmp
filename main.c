@@ -7,27 +7,32 @@
 #include <SDL2/SDL_mixer.h> 
 
 
-/*
- * Describes a single audio track.
- */
 typedef struct {
 	char	name[50];  
 	char	path[256];
 } Track;
 
-/*
- * Holds the application's current state.
- */
 typedef struct {
-	Track	library[100]; 
-	int	track_count;    
-	int	is_running;
-	int     current_volume;
-	char	current_track[256];
-	char	command_buffer[256];
-	char	message[256];
-	double  track_duration; /* Duration of the currently playing track */
+	char name[50];
+	int track_indices[100];
+	int track_count;
+} Playlist;
+
+typedef struct {
+	Track	 library[100]; 
+	Playlist playlists[20];
+	int      playlist_count;
+	int	 track_count;    
+	int	 is_running;
+	int      current_volume;
+	char	 current_track[256];
+	char	 command_buffer[256];
+	char	 message[256];
+	double   track_duration;
+	int      playing_playlist_index;
+    int      playing_track_index_in_playlist;
 } AppState;
+
 
 void handle_command(AppState *state);
 void draw_ui(AppState *state);
@@ -61,11 +66,12 @@ int main(int argc, char *argv[])
 	noecho();
 	cbreak();
 	keypad(stdscr, TRUE);
-	timeout(100); /* Make getch() non-blocking */
+	timeout(100);
 	
-	state.current_volume = 100; /* Start with a reasonable volume */
+	state.current_volume = 100;
 	player_set_volume(state.current_volume);
 	state.is_running = 1;
+	state.playing_playlist_index = -1;
 	strncpy(state.message, "Welcome to lmp!", sizeof(state.message) -1);
 
 	while (state.is_running) {
@@ -90,9 +96,9 @@ int main(int argc, char *argv[])
 				move(rows - 1, 1);
 				attroff(A_REVERSE);
 				
-				timeout(-1); /* Make getstr blocking */
+				timeout(-1);
 				getstr(state.command_buffer);
-				timeout(100); /* Restore non-blocking */
+				timeout(100);
 
 				noecho();
 				clear();
@@ -103,11 +109,28 @@ int main(int argc, char *argv[])
 			}
 		}
 		
-		/* Check if track has finished */
+		
 		if (state.current_track[0] != '\0' && !player_is_playing()) {
-			strncpy(state.current_track, "", sizeof(state.current_track) -1);
-			state.track_duration = 0.0;
-			strncpy(state.message, "Playback Finished.", sizeof(state.message) -1);
+			if (state.playing_playlist_index != -1) {
+				Playlist *playlist = &state.playlists[state.playing_playlist_index];
+				
+				state.playing_track_index_in_playlist++;
+				
+				if (state.playing_track_index_in_playlist < playlist->track_count) {
+					int library_track_index = playlist->track_indices[state.playing_track_index_in_playlist];
+					play_track(&state, state.library[library_track_index].path);
+					snprintf(state.message, sizeof(state.message), "Now playing next track in '%s'", playlist->name);
+				} else {
+					state.playing_playlist_index = -1;
+					strncpy(state.current_track, "", sizeof(state.current_track) - 1);
+					state.track_duration = 0.0;
+					snprintf(state.message, sizeof(state.message), "Playlist '%s' finished.", playlist->name);
+				}
+			} else {
+				strncpy(state.current_track, "", sizeof(state.current_track) - 1);
+				state.track_duration = 0.0;
+				snprintf(state.message, sizeof(state.message), "Playback Finished.");
+			}
 		}
 	}
 
@@ -116,10 +139,6 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
-/**
- * draw_ui() - Redraws the entire terminal interface.
- * @state:	A pointer to the current application state.
- */
 void draw_ui(AppState *state)
 {
 	int	rows, cols;
@@ -146,6 +165,13 @@ void draw_ui(AppState *state)
 	}
 
 	if (status_text && state->current_track[0] != '\0') {
+		char temp_buffer[256] = {0};
+		
+		if (state->playing_playlist_index != -1) {
+			snprintf(temp_buffer, sizeof(temp_buffer), "Playlist: %s | ", 
+				 state->playlists[state->playing_playlist_index].name);
+		}
+
 		const char *filename = strrchr(state->current_track, '/');
 		if (filename) {
 			filename++;
@@ -153,16 +179,20 @@ void draw_ui(AppState *state)
 			filename = state->current_track;
 		}
 		
-		snprintf(display_buffer, sizeof(display_buffer), "%s - \"%s\"", status_text, filename);
-		int text_len = strlen(display_buffer);
+		char track_vol_buffer[200];
+		snprintf(track_vol_buffer, sizeof(track_vol_buffer), "%s - \"%s\" | Volume: %d", 
+			 status_text, filename, state->current_volume);
+
+		strncat(temp_buffer, track_vol_buffer, sizeof(temp_buffer) - strlen(temp_buffer) - 1);
+		
+		int text_len = strlen(temp_buffer);
 		if (cols > text_len + 2) {
-			mvprintw(0, cols - text_len - 2, "%s", display_buffer);
+			mvprintw(0, cols - text_len - 2, "%s", temp_buffer);
 		}
 	}
 
 	mvprintw(2, 2, "Message: %s", state->message);
 
-	/* Draw progress bar */
 	if (player_is_playing() && state->track_duration > 0) {
 		double current_position = player_get_current_position();
 		double duration = state->track_duration;
@@ -175,7 +205,6 @@ void draw_ui(AppState *state)
 			(int)(current_position) / 60, (int)(current_position) % 60,
 			(int)(duration) / 60, (int)(duration) % 60);
 
-		/* Total non-bar space is for "  [] " (5 chars) and the time string */
 		bar_width = cols - 5 - (int)strlen(time_str);
 		if (bar_width < 10) bar_width = 10;
 
@@ -198,10 +227,6 @@ void draw_ui(AppState *state)
 	refresh();
 }
 
-/**
- * handle_command() - Parses and acts on a command from the user.
- * @state:	A pointer to the current application state.
- */
 void handle_command(AppState *state)
 {
 	char	buffer_copy[256];
@@ -268,67 +293,90 @@ void handle_command(AppState *state)
 		}
 
 		if (name[0] == '\0' || path[0] == '\0') {
-			strncpy(state->message, "Usage: add \"<name>\" <path>  OR  add <name> <path>", sizeof(state->message) -1);
+			sprintf(state->message, "Usage: add \"<name>\" <path>  OR  add <name> <path>");
 		} else {
 			if (state->track_count >= 100) {
-				strncpy(state->message, "Library is full.", sizeof(state->message) -1);
+				sprintf(state->message, "Library is full.");
 			} else {
 				Track *new_track = &state->library[state->track_count];
 				strncpy(new_track->name, name, sizeof(new_track->name) - 1);
 				strncpy(new_track->path, path, sizeof(new_track->path) - 1);
 				state->track_count++;
-				snprintf(state->message, sizeof(state->message), "Added: '%s'", name);
+				sprintf(state->message, "Added: '%s'", name);
 			}
 		}
 	} else if (strcmp(command, "help") == 0) {
-		strncpy(state->message, "---Command List and instructions---\n1.<add> <track_name> <track_path.mp3>\n---Adds track to the library.\n\n2.<library>\n---Shows all tracks in the library.\n\n3.<play> <track_name>\n---Plays the track.\n\n4.<stop>\n---Stop current playing track.\n\n5.<pause>\n---Pauses current track. You can resume playing it by typing <pause> again.\n\n6.<quit>\n---Quit the program.", sizeof(state->message) -1);
+		const char *help_message = "Commands:\n"
+			"  add \"<name>\" <path>    - Add track to library\n"
+			"  library / lib            - Show library & playlists\n"
+			"  play <name>              - Play a track from library\n"
+			"  pause                    - Toggle pause/resume\n"
+			"  stop                     - Stop playback\n"
+			"  setvolume <0-100>        - Set the volume\n"
+			"  createlist <name>        - Create a new playlist\n"
+			"  listadd \"<pl>\" \"<track>\"   - Add track to a playlist\n"
+			"  listview <name>          - View tracks in a playlist\n"
+			"  listplay <name>          - Play a playlist\n"
+			"  remove / rm <name>       - Remove track from library\n"
+			"  quit                     - Exit the player";
+		sprintf(state->message, "%s", help_message);
 	} else if (strcmp(command, "library") == 0 || strcmp(command, "lib") == 0) {
 		int	rows, cols;
 		getmaxyx(stdscr, rows, cols);
 		clear();
+
+		int mid_col = cols / 2;
+		int max_items = (state->track_count > state->playlist_count) ? state->track_count : state->playlist_count;
+		int content_rows = rows - 4;
+
 		mvprintw(0, 2, "--- Library ---");
+		mvprintw(0, mid_col + 2, "--- Playlists ---");
 
-		int	last_line = 2;
+		for (int i = 0; i < content_rows; i++) {
+			if (i >= max_items) {
+				break;
+			}
 
-		if (state->track_count == 0) {
-			mvprintw(last_line, 4, "Empty.");
-			last_line++;
-		} else {
-			for (int i = 0; i < state->track_count; i++) {
-				if (last_line >= rows -1) {
-					mvprintw(last_line, 4, "...");
-					last_line++;
-					break;
-				}
-				mvprintw(last_line, 4, "%d: %s {%s}", i + 1, state->library[i].name, state->library[i].path);
-				last_line++;
+			if (i < state->track_count) {
+				char track_str[256];
+				sprintf(track_str, "%d: %s", i + 1, state->library[i].name);
+				track_str[mid_col - 4] = '\0';
+				mvprintw(i + 2, 2, "%s", track_str);
+			}
+
+			if (i < state->playlist_count) {
+				char playlist_str[256];
+				sprintf(playlist_str, "%d: %s", i + 1, state->playlists[i].name);
+				playlist_str[cols - mid_col - 4] = '\0';
+				mvprintw(i + 2, mid_col + 2, "%s", playlist_str);
 			}
 		}
-
-		if (last_line >= rows) {
-			last_line = rows - 1;
+		
+		if (max_items > content_rows) {
+			mvprintw(rows - 2, 2, "...");
 		}
 
 		attron(A_REVERSE);
-		mvprintw(last_line + 1, 0, "Press any key to return");
+		mvprintw(rows - 1, 0, "Press any key to return");
 		attroff(A_REVERSE);
 
 		refresh();
-		timeout(-1); /* Wait for user input */
+		timeout(-1);
 		getch(); 
-		timeout(100); /* Restore non-blocking mode */
-		strncpy(state->message, "Returned from library view.", sizeof(state->message) -1);
+		timeout(100);
+		sprintf(state->message, "Returned from library view.");
 	} else if (strcmp(command, "quit") == 0) {
 		state->is_running = 0;
 	} else if (strcmp(command, "play") == 0) {
         if (!argument || *argument == '\0') {
-                strncpy(state->message, "Usage: play <track_name>", sizeof(state->message) -1);
+                snprintf(state->message, sizeof(state->message), "Usage: play <track_name>");
         } else {
                 int i;
                 int found = 0; 
 
                 for (i = 0; i < state->track_count; i++) {
                         if (strcmp(state->library[i].name, argument) == 0) {
+				state->playing_playlist_index = -1;
                                 play_track(state, state->library[i].path);
                                 found = 1; 
                                 break;   
@@ -341,7 +389,7 @@ void handle_command(AppState *state)
         }
 	} else if (strcmp(command, "pause") == 0) {
 		player_pause_toggle();
-		strncpy(state->message, "Toggled pause/resume.", sizeof(state->message) -1);
+		sprintf(state->message, "Toggled pause/resume.");
 	} else if (strcmp(command, "volume") == 0) {
 		int rows, cols;
 		getmaxyx(stdscr, rows, cols);
@@ -355,29 +403,29 @@ void handle_command(AppState *state)
 		attroff(A_REVERSE);
 
 		refresh();
-		timeout(-1); /* Wait for user input */
+		timeout(-1);
 		getch(); 
-		timeout(100); /* Restore non-blocking mode */
-		strncpy(state->message, "Returned from volume view.", sizeof(state->message) -1);
+		timeout(100);
+		sprintf(state->message, "Returned from volume view.");
 
 	} else if (strcmp(command, "setvolume") == 0) {
 		if (!argument || *argument == '\0') {
-			snprintf(state->message, sizeof(state->message), "Usage: setvolume <volume>");
+			sprintf(state->message, "Usage: setvolume <volume>");
 		} else {
 			int volume = atoi(argument);
 			if (volume < 0 || volume > 100) {
-				snprintf(state->message, sizeof(state->message), "Please, enter a valid volume value (0-100)");
+				sprintf(state->message, "Please, enter a valid volume value (0-100)");
 			} else {
 				state->current_volume = volume;
 				player_set_volume(volume);
-				snprintf(state->message, sizeof(state->message), "Volume set to %d", state->current_volume);
+				sprintf(state->message, "Volume set to %d", state->current_volume);
 			}
 		}
 	} else if (strcmp(command, "author") == 0) {
-		strncpy(state->message, "---Authors---\n dormant1337: https://github.com/Zer0Flux86\n Syn4pse: https://github.com/BoLIIIoi\n", sizeof(state->message) -1);
+		sprintf(state->message, "---Authors---\n dormant1337: https://github.com/Zer0Flux86\n Syn4pse: https://github.com/BoLIIIoi\n");
 	} else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
 		if (!argument || *argument == '\0') {
-			snprintf(state->message, sizeof(state->message), "Usage: remove <track_name>");
+			sprintf(state->message, "Usage: remove <track_name>");
 		} else {
 			int i;
 			int found_index = -1;
@@ -388,23 +436,221 @@ void handle_command(AppState *state)
 				}
 			}
 			if(found_index == -1) {
-				snprintf(state->message, sizeof(state->message), "Track not found...");
+				sprintf(state->message, "Track not found...");
 			} else {
 				for (i = found_index; i < state->track_count - 1; i++) {
 					state->library[i] = state->library[i + 1];
 				}
 				state->track_count--;
-				snprintf(state->message, sizeof(state->message), "Removed track: '%s'", argument);
+				sprintf(state->message, "Removed track: '%s'", argument);
 			}
 		}
 
 
+	} else if (strcmp(command, "createlist") == 0) {
+		if (!argument || *argument == '\0') {
+			sprintf(state->message, "Usage: createlist <list_name>");
+		} else {
+			if (state->playlist_count >= 20) {
+				sprintf(state->message, "Error: Maximum number of lists reached");
+			} else {
+				int found = 0;
+				for (int i = 0; i < state->playlist_count; i++) {
+					if (strcmp(state->playlists[i].name, argument) == 0) {
+						found = 1;
+						break;
+					}
+				}
+				if (found) {
+					sprintf(state->message, "Error: List already exists");
+				} else {
+					Playlist *new_playlist = &state->playlists[state->playlist_count];
+					strncpy(new_playlist->name, argument, sizeof(new_playlist->name) - 1);
+					new_playlist->name[sizeof(new_playlist->name) - 1] = '\0';
+					new_playlist->track_count = 0;
+					state->playlist_count++;
+					sprintf(state->message, "List '%s' succesfully created.", argument);
+
+				}
+			}
+		}
+	} else if (strcmp(command, "listadd") == 0) {
+		char playlist_name[50] = {0};
+		char track_name[50] = {0};
+		const char *args = state->command_buffer + strlen(command);
+
+		while (*args == ' ') {
+			args++;
+		}
+
+		if (*args == '"') {
+			const char *name_start = args + 1;
+			const char *name_end = strchr(name_start, '"');
+			if (name_end) {
+				size_t len = name_end - name_start;
+				if (len > sizeof(playlist_name) - 1) len = sizeof(playlist_name) - 1;
+				strncpy(playlist_name, name_start, len);
+				playlist_name[len] = '\0';
+				args = name_end + 1;
+			}
+		} else {
+			const char *name_start = args;
+			const char *name_end = strchr(name_start, ' ');
+			if (name_end) {
+				size_t len = name_end - name_start;
+				if (len > sizeof(playlist_name) - 1) len = sizeof(playlist_name) - 1;
+				strncpy(playlist_name, name_start, len);
+				playlist_name[len] = '\0';
+				args = name_end;
+			}
+		}
+
+		while (*args == ' ') {
+			args++;
+		}
+
+		if (*args == '"') {
+			const char *name_start = args + 1;
+			const char *name_end = strchr(name_start, '"');
+			if (name_end) {
+				size_t len = name_end - name_start;
+				if (len > sizeof(track_name) - 1) len = sizeof(track_name) - 1;
+				strncpy(track_name, name_start, len);
+				track_name[len] = '\0';
+			}
+		} else {
+			strncpy(track_name, args, sizeof(track_name) - 1);
+			track_name[sizeof(track_name) - 1] = '\0';
+		}
+
+
+		if (playlist_name[0] == '\0' || track_name[0] == '\0') {
+			sprintf(state->message, "Usage: listadd \"<playlist>\" \"<track>\"");
+			return;
+		}
+
+		int playlist_index = -1;
+		for (int i = 0; i < state->playlist_count; i++) {
+			if (strcmp(state->playlists[i].name, playlist_name) == 0) {
+				playlist_index = i;
+				break;
+			}
+		}
+
+		if (playlist_index == -1) {
+			sprintf(state->message, "Error: Playlist '%s' not found.", playlist_name);
+			return;
+		}
+
+		int track_index = -1;
+		for (int i = 0; i < state->track_count; i++) {
+			if (strcmp(state->library[i].name, track_name) == 0) {
+				track_index = i;
+				break;
+			}
+		}
+
+		if (track_index == -1) {
+			sprintf(state->message, "Error: Track '%s' not found in library.", track_name);
+			return;
+		}
+
+		Playlist *playlist = &state->playlists[playlist_index];
+		if (playlist->track_count >= 100) {
+			sprintf(state->message, "Error: Playlist '%s' is full.", playlist->name);
+		} else {
+			playlist->track_indices[playlist->track_count] = track_index;
+			playlist->track_count++;
+			sprintf(state->message, "Added '%s' to playlist '%s'.", track_name, playlist_name);
+		}
+	} else if (strcmp(command, "listview") == 0) {
+		if (!argument || *argument == '\0') {
+			sprintf(state->message, "Usage: listview <playlist_name>");
+			return;
+		}
+
+		int playlist_index = -1;
+		for (int i = 0; i < state->playlist_count; i++) {
+			if (strcmp(state->playlists[i].name, argument) == 0) {
+				playlist_index = i;
+				break;
+			}
+		}
+
+		if (playlist_index == -1) {
+			sprintf(state->message, "Error: Playlist '%s' not found.", argument);
+			return;
+		}
+
+		Playlist *playlist = &state->playlists[playlist_index];
+		int rows, cols;
+		getmaxyx(stdscr, rows, cols);
+		clear();
+		mvprintw(0, 2, "--- Playlist: %s ---", playlist->name);
+
+		int last_line = 2;
+		if (playlist->track_count == 0) {
+			mvprintw(last_line, 4, "Empty.");
+		} else {
+			for (int i = 0; i < playlist->track_count; i++) {
+				if (last_line >= rows - 2) {
+					mvprintw(last_line, 4, "...");
+					break;
+				}
+				int track_idx = playlist->track_indices[i];
+				mvprintw(last_line, 4, "%d: %s", i + 1, state->library[track_idx].name);
+				last_line++;
+			}
+		}
+
+		attron(A_REVERSE);
+		mvprintw(rows - 1, 0, "Press any key to return");
+		attroff(A_REVERSE);
+
+		refresh();
+		timeout(-1);
+		getch();
+		timeout(100);
+		sprintf(state->message, "Returned from playlist view.");
+	} else if (strcmp(command, "listplay") == 0) {
+		if (!argument || *argument == '\0') {
+			sprintf(state->message, "Usage: listplay <playlist_name>");
+			return;
+		}
+
+		int playlist_index = -1;
+		for (int i = 0; i < state->playlist_count; i++) {
+			if (strcmp(state->playlists[i].name, argument) == 0) {
+				playlist_index = i;
+				break;
+			}
+		}
+
+		if (playlist_index == -1) {
+			sprintf(state->message, "Error: Playlist '%s' not found.", argument);
+			return;
+		}
+
+		Playlist *playlist = &state->playlists[playlist_index];
+		if (playlist->track_count == 0) {
+			sprintf(state->message, "Error: Playlist '%s' is empty.", argument);
+			return;
+		}
+
+		state->playing_playlist_index = playlist_index;
+		state->playing_track_index_in_playlist = 0;
+
+		int library_track_index = playlist->track_indices[0];
+
+		play_track(state, state->library[library_track_index].path);
+		sprintf(state->message, "Playing playlist '%s'", playlist->name);
 	} else if (strcmp(command, "stop") == 0) {
 		player_stop();
+		state->playing_playlist_index = -1;
 		strncpy(state->current_track, "", sizeof(state->current_track) -1);
 		state->track_duration = 0.0;
-		strncpy(state->message, "Playback stopped.", sizeof(state->message) -1);
+		sprintf(state->message, "Playback stopped.");
 	} else {
-			snprintf(state->message, sizeof(state->message), "Unknown command: %s", command);
+			sprintf(state->message, "Unknown command: %s", command);
 	}
 }
