@@ -18,5 +18,6 @@ int player_is_playing(void);
 PlayerStatus player_get_status(void);
 double player_get_current_position(void);
 double get_mp3_duration(const char *filename);
-
+struct AppState;
+void addfolder(struct AppState *state, const char *dirpath);
 #endif /* FUNCTIONS_H */

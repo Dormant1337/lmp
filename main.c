@@ -1,8 +1,16 @@
+/* main.c - full file with addholder command, config integration, playlists */
+/* help prints multi-line into message using \n */
+
 #include <ncurses.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <stdlib.h>  
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <strings.h>
+
 #include "functions.h"
 #include "config.h"
 #include "main.h"
@@ -10,6 +18,141 @@
 /* Prototypes */
 static void handle_command(AppState *state);
 static void draw_ui(AppState *state);
+static void play_track(AppState *state, const char *track_path);
+
+/* Helpers for addholder */
+static int has_mp3_ext(const char *name)
+{
+	const char *dot = strrchr(name, '.');
+
+	if (!dot)
+		return 0;
+	return strcasecmp(dot, ".mp3") == 0;
+}
+
+static void strip_mp3_ext(const char *fname, char *out, size_t outlen)
+{
+	const char *dot = strrchr(fname, '.');
+	size_t n = dot ? (size_t)(dot - fname) : strlen(fname);
+
+	if (!outlen)
+		return;
+	if (n >= outlen)
+		n = outlen - 1;
+
+	memcpy(out, fname, n);
+	out[n] = '\0';
+}
+
+static void join_path(char *dst, size_t dstsz, const char *dir, const char *name)
+{
+	size_t len = strlen(dir);
+
+	if (len > 0 && dir[len - 1] == '/')
+		snprintf(dst, dstsz, "%s%s", dir, name);
+	else
+		snprintf(dst, dstsz, "%s/%s", dir, name);
+}
+
+static int track_name_exists(const AppState *state, const char *name)
+{
+	int i;
+
+	for (i = 0; i < state->track_count; i++) {
+		if (strcmp(state->library[i].name, name) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int track_path_exists(const AppState *state, const char *path)
+{
+	int i;
+
+	for (i = 0; i < state->track_count; i++) {
+		if (strcmp(state->library[i].path, path) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static void cmd_addholder(AppState *state, const char *dirpath)
+{
+	DIR *dir;
+	struct dirent *de;
+	int added = 0, skipped_exists = 0, skipped_cap = 0, skipped_invalid = 0;
+
+	if (!dirpath || !*dirpath) {
+		snprintf(state->message, sizeof(state->message),
+			 "Usage: addholder <directory_path>");
+		return;
+	}
+
+	dir = opendir(dirpath);
+	if (!dir) {
+		snprintf(state->message, sizeof(state->message),
+			 "addholder: cannot open '%s': %s",
+			 dirpath, strerror(errno));
+		return;
+	}
+
+	while ((de = readdir(dir)) != NULL) {
+		char fullpath[512];
+		struct stat st;
+		char track_name[50];
+
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+			continue;
+
+		if (!has_mp3_ext(de->d_name))
+			continue;
+
+		join_path(fullpath, sizeof(fullpath), dirpath, de->d_name);
+
+		if (stat(fullpath, &st) != 0 || !S_ISREG(st.st_mode)) {
+			skipped_invalid++;
+			continue;
+		}
+
+		if (state->track_count >= 100) {
+			skipped_cap++;
+			break; /* library full */
+		}
+
+		strip_mp3_ext(de->d_name, track_name, sizeof(track_name));
+		if (track_name[0] == '\0') {
+			skipped_invalid++;
+			continue;
+		}
+
+		if (track_name_exists(state, track_name) ||
+		    track_path_exists(state, fullpath)) {
+			skipped_exists++;
+			continue;
+		}
+
+		strncpy(state->library[state->track_count].name, track_name,
+			sizeof(state->library[state->track_count].name) - 1);
+		state->library[state->track_count].name[
+			sizeof(state->library[state->track_count].name) - 1] = '\0';
+
+		strncpy(state->library[state->track_count].path, fullpath,
+			sizeof(state->library[state->track_count].path) - 1);
+		state->library[state->track_count].path[
+			sizeof(state->library[state->track_count].path) - 1] = '\0';
+
+		state->track_count++;
+		added++;
+	}
+	closedir(dir);
+
+	/* Persist library changes */
+	config_save(state);
+
+	snprintf(state->message, sizeof(state->message),
+		 "addholder: added %d, skipped (exists %d, capacity %d, invalid %d)",
+		 added, skipped_exists, skipped_cap, skipped_invalid);
+}
 
 static void play_track(AppState *state, const char *track_path)
 {
@@ -271,11 +414,14 @@ static void handle_command(AppState *state)
 				strncpy(name, name_start, len);
 				name[len] = '\0';
 
-				const char *path_start = name_end + 1;
-				while (*path_start == ' ')
-					path_start++;
-				strncpy(path, path_start, sizeof(path) - 1);
-				path[sizeof(path) - 1] = '\0';
+				{
+					const char *path_start = name_end + 1;
+
+					while (*path_start == ' ')
+						path_start++;
+					strncpy(path, path_start, sizeof(path) - 1);
+					path[sizeof(path) - 1] = '\0';
+				}
 			}
 		} else {
 			const char *name_start = args;
@@ -288,11 +434,14 @@ static void handle_command(AppState *state)
 				strncpy(name, name_start, len);
 				name[len] = '\0';
 
-				const char *path_start = name_end + 1;
-				while (*path_start == ' ')
-					path_start++;
-				strncpy(path, path_start, sizeof(path) - 1);
-				path[sizeof(path) - 1] = '\0';
+				{
+					const char *path_start = name_end + 1;
+
+					while (*path_start == ' ')
+						path_start++;
+					strncpy(path, path_start, sizeof(path) - 1);
+					path[sizeof(path) - 1] = '\0';
+				}
 			}
 		}
 
@@ -324,51 +473,29 @@ static void handle_command(AppState *state)
 		/* Persist library */
 		config_save(state);
 
+	} else if (strcmp(command, "addfolder") == 0) {
+		addfolder(state, argument);
+
 	} else if (strcmp(command, "help") == 0) {
-		int rows, cols, line = 2;
-		const char *help_lines[] = {
-			"Commands:",
-			"  add \"<name>\" <path>        - Add track to library",
-			"  library / lib               - Show library & playlists",
-			"  play <name>                 - Play a track from library",
-			"  pause                       - Toggle pause/resume",
-			"  stop                        - Stop playback",
-			"  setvolume <0-100>           - Set the volume",
-			"  volume                      - Show current volume",
-			"  listnew <name>              - Create a new playlist",
-			"  createlist <name>           - Create a new playlist (alias)",
-			"  listadd \"<pl>\" \"<track>\"   - Add track to a playlist",
-			"  listview <name>             - View tracks in a playlist",
-			"  listplay <name>             - Play a playlist",
-			"  remove / rm <name>          - Remove track from library",
-			"  author                      - Show authors",
-			"  quit                        - Exit the player",
-			NULL
-		};
-
-		getmaxyx(stdscr, rows, cols);
-		clear();
-		mvprintw(0, 2, "--- Help ---");
-
-		for (int i = 0; help_lines[i]; i++) {
-			if (line >= rows - 2) {
-				mvprintw(rows - 2, 2, "...");
-				break;
-			}
-			mvprintw(line++, 2, "%s", help_lines[i]);
-		}
-
-		attron(A_REVERSE);
-		mvprintw(rows - 1, 0, "Press any key to return");
-		attroff(A_REVERSE);
-
-		refresh();
-		timeout(-1);
-		getch();
-		timeout(100);
-
-		snprintf(state->message, sizeof(state->message),
-			 "Returned from help.");
+		const char *msg =
+			"Help:\n"
+			"add \"<name>\" <path>      - Add track to library\n"
+			"addholder <dir>          - Add all *.mp3 from dir (name=file sans .mp3)\n"
+			"library / lib            - Show library & playlists\n"
+			"play <name>              - Play a track from library\n"
+			"pause                    - Toggle pause/resume\n"
+			"stop                     - Stop playback\n"
+			"volume                   - Show current volume\n"
+			"setvolume <0-100>        - Set the volume\n"
+			"listnew <name>           - Create a new playlist\n"
+			"createlist <name>        - Alias to listnew\n"
+			"listadd \"<pl>\" \"<track>\" - Add track to a playlist\n"
+			"listview <name>          - View tracks in a playlist\n"
+			"listplay <name>          - Play a playlist\n"
+			"remove / rm <name>       - Remove track from library\n"
+			"author                   - Show authors\n"
+			"quit                     - Exit the player";
+		snprintf(state->message, sizeof(state->message), "%s", msg);
 
 	} else if (strcmp(command, "library") == 0 || strcmp(command, "lib") == 0) {
 		int rows, cols, line = 2, mid;

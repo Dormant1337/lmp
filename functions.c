@@ -4,6 +4,14 @@
 #include <SDL2/SDL_mixer.h>
 #include <mpg123.h>
 
+#include "main.h"
+#include "config.h"
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <strings.h>
+
 /* Global variables to hold the music track and timing */
 static Mix_Music *g_music;
 static Uint32 g_start_ticks;
@@ -183,4 +191,154 @@ out_close:
 out_del:
 	mpg123_delete(mh);
 	return duration;
+}
+
+/* =========================
+ * addfolder implementation
+ * ========================= */
+
+/* Return non-zero if name ends with ".mp3" (case-insensitive). */
+static int has_mp3_ext(const char *name)
+{
+	const char *dot = strrchr(name, '.');
+
+	if (!dot)
+		return 0;
+	return strcasecmp(dot, ".mp3") == 0;
+}
+
+/* Copy fname without trailing ".mp3" into out. */
+static void strip_mp3_ext(const char *fname, char *out, size_t outlen)
+{
+	const char *dot = strrchr(fname, '.');
+	size_t n = dot ? (size_t)(dot - fname) : strlen(fname);
+
+	if (!outlen)
+		return;
+	if (n >= outlen)
+		n = outlen - 1;
+
+	memcpy(out, fname, n);
+	out[n] = '\0';
+}
+
+/* Join dir and name into dst. */
+static void join_path(char *dst, size_t dstsz, const char *dir, const char *name)
+{
+	size_t len = strlen(dir);
+
+	if (len > 0 && dir[len - 1] == '/')
+		snprintf(dst, dstsz, "%s%s", dir, name);
+	else
+		snprintf(dst, dstsz, "%s/%s", dir, name);
+}
+
+static int track_name_exists(const AppState *state, const char *name)
+{
+	int i;
+
+	for (i = 0; i < state->track_count; i++) {
+		if (strcmp(state->library[i].name, name) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int track_path_exists(const AppState *state, const char *path)
+{
+	int i;
+
+	for (i = 0; i < state->track_count; i++) {
+		if (strcmp(state->library[i].path, path) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+/**
+ * addfolder() - add all *.mp3 files from a directory into library.
+ * @state:	app state pointer
+ * @dirpath:	target directory path (no recursion)
+ *
+ * - Track name is file name without ".mp3" (case-insensitive).
+ * - Skips duplicates by name or by path.
+ * - Respects library capacity (100 tracks).
+ * - Writes a summary to state->message and saves config on completion.
+ */
+void addfolder(AppState *state, const char *dirpath)
+{
+	DIR *dir;
+	struct dirent *de;
+	int added = 0, skipped_exists = 0, skipped_cap = 0, skipped_invalid = 0;
+
+	if (!dirpath || !*dirpath) {
+		snprintf(state->message, sizeof(state->message),
+			 "Usage: addfolder <directory_path>");
+		return;
+	}
+
+	dir = opendir(dirpath);
+	if (!dir) {
+		snprintf(state->message, sizeof(state->message),
+			 "addfolder: cannot open '%s': %s",
+			 dirpath, strerror(errno));
+		return;
+	}
+
+	while ((de = readdir(dir)) != NULL) {
+		char fullpath[512];
+		struct stat st;
+		char track_name[50];
+
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+			continue;
+
+		if (!has_mp3_ext(de->d_name))
+			continue;
+
+		join_path(fullpath, sizeof(fullpath), dirpath, de->d_name);
+
+		if (stat(fullpath, &st) != 0 || !S_ISREG(st.st_mode)) {
+			skipped_invalid++;
+			continue;
+		}
+
+		if (state->track_count >= 100) {
+			skipped_cap++;
+			break; /* library full */
+		}
+
+		strip_mp3_ext(de->d_name, track_name, sizeof(track_name));
+		if (track_name[0] == '\0') {
+			skipped_invalid++;
+			continue;
+		}
+
+		if (track_name_exists(state, track_name) ||
+		    track_path_exists(state, fullpath)) {
+			skipped_exists++;
+			continue;
+		}
+
+		strncpy(state->library[state->track_count].name, track_name,
+			sizeof(state->library[state->track_count].name) - 1);
+		state->library[state->track_count].name[
+			sizeof(state->library[state->track_count].name) - 1] = '\0';
+
+		strncpy(state->library[state->track_count].path, fullpath,
+			sizeof(state->library[state->track_count].path) - 1);
+		state->library[state->track_count].path[
+			sizeof(state->library[state->track_count].path) - 1] = '\0';
+
+		state->track_count++;
+		added++;
+	}
+	closedir(dir);
+
+	/* Persist library changes */
+	config_save(state);
+
+	snprintf(state->message, sizeof(state->message),
+		 "addfolder: added %d, skipped (exists %d, capacity %d, invalid %d)",
+		 added, skipped_exists, skipped_cap, skipped_invalid);
 }

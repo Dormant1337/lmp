@@ -21,7 +21,7 @@ typedef struct AppState {
 	int	 current_volume;
 	char	 current_track[256];
 	char	 command_buffer[256];
-	char	 message[2048];
+	char	 message[2048]; 
 	double	 track_duration;
 	int	 playing_playlist_index;
 	int	 playing_track_index_in_playlist;
