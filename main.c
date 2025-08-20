@@ -2,8 +2,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <stdlib.h>
-
+#include <stdlib.h>  
 #include "functions.h"
 #include "config.h"
 #include "main.h"
