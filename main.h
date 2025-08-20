@@ -15,6 +15,7 @@ typedef struct Playlist {
 typedef struct AppState {
 	Track	 library[100];
 	Playlist playlists[20];
+	char     mode[50];
 	int	 playlist_count;
 	int	 track_count;
 	int	 is_running;
