@@ -555,7 +555,8 @@ static void handle_command(AppState *state) {
                       "setmode <mode>           - Set playback mode (no-repeat, repeat-one, repeat-all, shuffle)\n" 
                       "listnew <name>           - Create a new playlist\n" 
                       "createlist <name>        - Alias to listnew\n" 
-                      "listadd \"<pl>\" \"<track>\" - Add track to a playlist\n" 
+                      "listadd \"<pl>\" \"<track>\" - Add track to a playlist\n"
+                      "listaddmulti <pl> <id>.. - Add multiple tracks to playlist by ID from library.\n"
                       "listview <name>          - View tracks in a playlist\n" 
                       "listplay <name>          - Play a playlist\n" 
                       "remove / rm <name>       - Remove track from library\n" 
@@ -750,8 +751,92 @@ static void handle_command(AppState *state) {
     }
   } else if (strcmp(command, "mode") == 0) {
 	sprintf(state->message, "Use setmode to change the playback mode.");
-  }
-  else if (strcmp(command, "listnew") == 0 ||
+  } else if (strcmp(command, "listaddmulti") == 0) {
+        char *pl_name;
+        char *token;
+        int pidx = -1;
+        int added_count = 0;
+        Playlist *pl;
+
+        if (!argument) {
+                snprintf(state->message, sizeof(state->message),
+                        "Usage: listaddmulti <playlist> <id1> <id2> ...");
+                return;
+        }
+
+        /* The first token is the playlist name. */
+        pl_name = strtok(argument," ");
+        if (!pl_name) {
+                snprintf(state->message, sizeof(state->message),
+                        "Usage: listaddmulti <playlist> <id1> <id2> ...");
+                return;
+        }
+
+        /* Find the playlist by its name. */
+        for (int i = 0; i < state->playlist_count; i++) {
+                if (strcmp(state->playlists[i].name, pl_name) == 0) {
+                        pidx = i;
+                        break;
+                }
+        }
+
+        if (pidx == -1) {
+                snprintf(state->message, sizeof(state->message),
+                        "Error: Playlist '%s' not found.", pl_name);
+                return;
+        }
+
+        pl = &state->playlists[pidx];
+
+        /*
+         * Iterate over the remaining tokens, which are track IDs.
+         * strtokNULL, ...) continues tokenizing the same string.
+         */
+        while ((token = strtok(NULL, " ")) != NULL) {
+                int track_id = atoi(token);
+
+                /*
+                 * Validate track ID. User-facing IDs ar1-based,
+                 * but librararray is 0-based.
+                 */
+                if (track_id <= 0 || track_id > state->track_count) {
+                        /*
+                         * Silently skip invalid IDs to allfor bulk operations
+                         * where some IDs might be erroneous. A more verbose
+                         * error could be added heif desired.
+                         */
+                        continue;
+                }
+
+                if (pl->track_count >= 100) {
+                        snprintf(state->message, sizeof(state->message),
+                                "Playlist '%s' is full. Added %d tracks.",
+                                pl->name, added_count);
+                        /*
+                         * Save config evif playlist becomes full,
+                         * because some tracks might have been added.
+                         */
+                        if (added_count > 0)
+                                config_save(state);
+                        return;
+                }
+
+                /* Store the 0-based index. */
+                pl->track_indices[pl->track_count] = track_id - 1;
+                pl->track_count++;
+                added_count++;
+        }
+
+        if (added_count > 0) {
+                snprintf(state->message, sizeof(state->message),
+                        "Added %d tracks to playlist '%s'.",
+                        added_count, pl->name);
+                config_save(state);
+        } else {
+                snprintf(state->message, sizeof(state->message),
+                        "No valid tracks added. Check track IDs.");
+        }
+  } else if (strcmp(command, "listnew") == 0 ||
              strcmp(command, "createlist") == 0) {
     if (!argument || *argument == '\0') {
       snprintf(state->message, sizeof(state->message),
