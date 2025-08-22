@@ -18,6 +18,13 @@ int player_is_playing(void);
 PlayerStatus player_get_status(void);
 double player_get_current_position(void);
 double get_mp3_duration(const char *filename);
+
 struct AppState;
 void addfolder(struct AppState *state, const char *dirpath);
+
+/* Dynamic array helpers */
+int ensure_library_capacity(struct AppState *state, int additional);
+int ensure_playlists_capacity(struct AppState *state, int additional);
+void free_app_state(struct AppState *state);
+
 #endif /* FUNCTIONS_H */

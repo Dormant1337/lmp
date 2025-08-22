@@ -11,6 +11,97 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <strings.h>
+#include <stdlib.h>
+#include <limits.h>
+
+/* Initial capacities for dynamic arrays (backward-compatible defaults) */
+#define LMP_INIT_LIBRARY_CAP	100
+#define LMP_INIT_PLAYLISTS_CAP	20
+
+/* =========================
+ * Dynamic array helpers
+ * ========================= */
+
+int ensure_library_capacity(struct AppState *state, int additional)
+{
+	size_t need, newcap;
+	Track *tmp;
+
+	if (!state)
+		return -1;
+	if (additional < 0)
+		additional = 0;
+
+	if ((size_t)state->library_cap >=
+	    (size_t)state->track_count + (size_t)additional)
+		return 0;
+
+	newcap = state->library_cap ? state->library_cap : LMP_INIT_LIBRARY_CAP;
+	need = (size_t)state->track_count + (size_t)additional;
+	while (newcap < need) {
+		if (newcap > SIZE_MAX / 2)
+			return -1;
+		newcap *= 2;
+	}
+
+	tmp = realloc(state->library, newcap * sizeof(*state->library));
+	if (!tmp)
+		return -1;
+
+	state->library = tmp;
+	state->library_cap = (int)newcap;
+	return 0;
+}
+
+int ensure_playlists_capacity(struct AppState *state, int additional)
+{
+	size_t need, newcap;
+	Playlist *tmp;
+
+	if (!state)
+		return -1;
+	if (additional < 0)
+		additional = 0;
+
+	if ((size_t)state->playlists_cap >=
+	    (size_t)state->playlist_count + (size_t)additional)
+		return 0;
+
+	newcap = state->playlists_cap ? state->playlists_cap
+				      : LMP_INIT_PLAYLISTS_CAP;
+	need = (size_t)state->playlist_count + (size_t)additional;
+	while (newcap < need) {
+		if (newcap > SIZE_MAX / 2)
+			return -1;
+		newcap *= 2;
+	}
+
+	tmp = realloc(state->playlists, newcap * sizeof(*state->playlists));
+	if (!tmp)
+		return -1;
+
+	state->playlists = tmp;
+	state->playlists_cap = (int)newcap;
+	return 0;
+}
+
+void free_app_state(struct AppState *state)
+{
+	if (!state)
+		return;
+
+	free(state->playlists);
+	state->playlists = NULL;
+	state->playlists_cap = 0;
+
+	free(state->library);
+	state->library = NULL;
+	state->library_cap = 0;
+}
+
+/* =========================
+ * Audio backend (SDL_mixer + mpg123)
+ * ========================= */
 
 /* Global variables to hold the music track and timing */
 static Mix_Music *g_music;
@@ -34,7 +125,8 @@ void player_set_volume(int involume)
 int player_init(void)
 {
 	if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-		fprintf(stderr, "Failed to initialize SDL: %s\n", SDL_GetError());
+		fprintf(stderr, "Failed to initialize SDL: %s\n",
+			SDL_GetError());
 		return -1;
 	}
 
@@ -262,7 +354,7 @@ static int track_path_exists(const AppState *state, const char *path)
  *
  * - Track name is file name without ".mp3" (case-insensitive).
  * - Skips duplicates by name or by path.
- * - Respects library capacity (100 tracks).
+ * - Respects dynamic library capacity (auto-grow).
  * - Writes a summary to state->message and saves config on completion.
  */
 void addfolder(AppState *state, const char *dirpath)
@@ -303,9 +395,11 @@ void addfolder(AppState *state, const char *dirpath)
 			continue;
 		}
 
-		if (state->track_count >= 100) {
+		/* Ensure we have space for one more track */
+		if (ensure_library_capacity(state, 1) != 0) {
+			/* ENOMEM or overflow */
 			skipped_cap++;
-			break; /* library full */
+			break;
 		}
 
 		strip_mp3_ext(de->d_name, track_name, sizeof(track_name));
@@ -339,6 +433,6 @@ void addfolder(AppState *state, const char *dirpath)
 	config_save(state);
 
 	snprintf(state->message, sizeof(state->message),
-		 "addfolder: added %d, skipped (exists %d, capacity %d, invalid %d)",
+		 "addfolder: added %d, skipped (exists %d, alloc_fail %d, invalid %d)",
 		 added, skipped_exists, skipped_cap, skipped_invalid);
 }

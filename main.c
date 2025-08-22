@@ -1,6 +1,3 @@
-/* main.c - full file with addholder command, config integration, playlists */
-/* help prints multi-line into message using \n */
-
 #include <dirent.h>
 #include <errno.h>
 #include <ncurses.h>
@@ -109,9 +106,10 @@ static void cmd_addholder(AppState *state, const char *dirpath) {
       continue;
     }
 
-    if (state->track_count >= 100) {
+    /* Ensure we have space for one more track */
+    if (ensure_library_capacity(state, 1) != 0) {
       skipped_cap++;
-      break; /* library full */
+      break; /* allocation failed */
     }
 
     strip_mp3_ext(de->d_name, track_name, sizeof(track_name));
@@ -145,7 +143,7 @@ static void cmd_addholder(AppState *state, const char *dirpath) {
   config_save(state);
 
   snprintf(state->message, sizeof(state->message),
-           "addholder: added %d, skipped (exists %d, capacity %d, invalid %d)",
+           "addholder: added %d, skipped (exists %d, alloc_fail %d, invalid %d)",
            added, skipped_exists, skipped_cap, skipped_invalid);
 }
 
@@ -207,6 +205,14 @@ int main(int argc, char *argv[]) {
   state.playing_playlist_index = -1;
   state.playing_track_index_in_playlist = 0;
   strncpy(state.mode, "no-repeat", sizeof(state.mode) - 1);
+
+  /* Pre-allocate minimal capacity so config_load() can populate arrays */
+  if (ensure_library_capacity(&state, 1) != 0 ||
+      ensure_playlists_capacity(&state, 1) != 0) {
+    fprintf(stderr, "Out of memory.\n");
+    player_shutdown();
+    return 1;
+  }
 
   /* Load config (volume, library, playlists, last track) */
   config_load(&state);
@@ -326,6 +332,7 @@ int main(int argc, char *argv[]) {
   config_save(&state);
 
   endwin();
+  free_app_state(&state);
   player_shutdown();
   return 0;
 }
@@ -452,6 +459,7 @@ static void handle_command(AppState *state) {
   char *argument;
 
   strncpy(buffer_copy, state->command_buffer, sizeof(buffer_copy) - 1);
+  buffer_copy[sizeof(buffer_copy) - 1] = '\0';
   command = strtok(buffer_copy, " ");
   if (!command)
     return;
@@ -525,8 +533,10 @@ static void handle_command(AppState *state) {
                "Usage: add \"<name>\" <path>  OR  add <name> <path>");
       return;
     }
-    if (state->track_count >= 100) {
-      snprintf(state->message, sizeof(state->message), "Library is full.");
+
+    if (ensure_library_capacity(state, 1) != 0) {
+      snprintf(state->message, sizeof(state->message),
+               "Error: cannot grow library (out of memory).");
       return;
     }
     if (access(path, F_OK) != 0) {
@@ -537,8 +547,12 @@ static void handle_command(AppState *state) {
 
     strncpy(state->library[state->track_count].name, name,
             sizeof(state->library[state->track_count].name) - 1);
+    state->library[state->track_count]
+        .name[sizeof(state->library[state->track_count].name) - 1] = '\0';
     strncpy(state->library[state->track_count].path, path,
             sizeof(state->library[state->track_count].path) - 1);
+    state->library[state->track_count]
+        .path[sizeof(state->library[state->track_count].path) - 1] = '\0';
     state->track_count++;
 
     snprintf(state->message, sizeof(state->message), "Added '%s' to library.",
@@ -587,26 +601,24 @@ static void handle_command(AppState *state) {
   } else if (strcmp(command, "help") == 0) {
     const char *msg = "Help:\n"
                       "add \"<name>\" <path>      - Add track to library\n"
-                      "addfolder <dir>          - Add all *.mp3 from dir "
-                      "(name=file sans .mp3)\n"
-                      "library / lib            - Show library & playlists\n"
-                      "play <name>              - Play a track from library\n"
-                      "pause                    - Toggle pause/resume\n"
-                      "stop                     - Stop playback\n"
-                      "volume                   - Show current volume\n"
-                      "setvolume <0-100>        - Set the volume\n"
-                      "setmode <mode>           - Set playback mode "
-                      "(no-repeat, repeat-one, repeat-all, shuffle)\n"
-                      "listnew <name>           - Create a new playlist\n"
-                      "createlist <name>        - Alias to listnew\n"
+                      "addfolder <dir>           - Add all *.mp3 from dir (name=file sans .mp3)\n"
+                      "webdownload <track_name>  - Download via spotdl into LMP and import\n"
+                      "library / lib             - Show library & playlists\n"
+                      "play <name>               - Play a track from library\n"
+                      "pause                     - Toggle pause/resume\n"
+                      "stop                      - Stop playback\n"
+                      "volume                    - Show current volume\n"
+                      "setvolume <0-100>         - Set the volume\n"
+                      "setmode <mode>            - Set playback mode (no-repeat, repeat-one, repeat-all, shuffle)\n"
+                      "listnew <name>            - Create a new playlist\n"
+                      "createlist <name>         - Alias to listnew\n"
                       "listadd \"<pl>\" \"<track>\" - Add track to a playlist\n"
-                      "listaddmulti <pl> <id>.. - Add multiple tracks to "
-                      "playlist by ID from library.\n"
-                      "listview <name>          - View tracks in a playlist\n"
-                      "listplay <name>          - Play a playlist\n"
-                      "remove / rm <name>       - Remove track from library\n"
-                      "author                   - Show authors\n"
-                      "quit                     - Exit the player";
+                      "listaddmulti <pl> <id>..  - Add multiple tracks to playlist by ID from library.\n"
+                      "listview <name>           - View tracks in a playlist\n"
+                      "listplay <name>           - Play a playlist\n"
+                      "remove / rm <name>        - Remove track from library\n"
+                      "author                    - Show authors\n"
+                      "quit                      - Exit the player";
     snprintf(state->message, sizeof(state->message), "%s", msg);
 
   } else if (strcmp(command, "library") == 0 || strcmp(command, "lib") == 0) {
@@ -835,21 +847,17 @@ static void handle_command(AppState *state) {
 
     /*
      * Iterate over the remaining tokens, which are track IDs.
-     * strtokNULL, ...) continues tokenizing the same string.
+     * strtok(NULL, ...) continues tokenizing the same string.
      */
     while ((token = strtok(NULL, " ")) != NULL) {
       int track_id = atoi(token);
 
       /*
-       * Validate track ID. User-facing IDs ar1-based,
-       * but librararray is 0-based.
+       * Validate track ID. User-facing IDs are 1-based,
+       * but library array is 0-based.
        */
       if (track_id <= 0 || track_id > state->track_count) {
-        /*
-         * Silently skip invalid IDs to allfor bulk operations
-         * where some IDs might be erroneous. A more verbose
-         * error could be added heif desired.
-         */
+        /* Silently skip invalid IDs */
         continue;
       }
 
@@ -857,10 +865,6 @@ static void handle_command(AppState *state) {
         snprintf(state->message, sizeof(state->message),
                  "Playlist '%s' is full. Added %d tracks.", pl->name,
                  added_count);
-        /*
-         * Save config evif playlist becomes full,
-         * because some tracks might have been added.
-         */
         if (added_count > 0)
           config_save(state);
         return;
@@ -887,9 +891,9 @@ static void handle_command(AppState *state) {
                "Usage: %s <playlist_name>",
                strcmp(command, "listnew") == 0 ? "listnew" : "createlist");
     } else {
-      if (state->playlist_count >= 20) {
+      if (ensure_playlists_capacity(state, 1) != 0) {
         snprintf(state->message, sizeof(state->message),
-                 "Maximum playlists reached.");
+                 "Error: cannot grow playlists (out of memory).");
       } else {
         int exists = 0;
 
