@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "config.h"
@@ -193,6 +194,8 @@ int main(int argc, char *argv[]) {
   AppState state = {0};
   int ch, rows, cols;
 
+  srand(time(NULL));
+
   if (player_init() != 0) {
     fprintf(stderr, "Failed to initialize the audio player. Exiting.\n");
     return 1;
@@ -204,7 +207,6 @@ int main(int argc, char *argv[]) {
   state.playing_playlist_index = -1;
   state.playing_track_index_in_playlist = 0;
   strncpy(state.mode, "no-repeat", sizeof(state.mode) - 1);
-
 
   /* Load config (volume, library, playlists, last track) */
   config_load(&state);
@@ -256,60 +258,68 @@ int main(int argc, char *argv[]) {
     }
 
     /*
-		 * Automatic track advancement logic.
-		 * This block is executed when a track finishes playing.
-		 * It checks the current playback mode to decide what to do next.
-		 */
-		if (state.current_track[0] != '\0' && !player_is_playing()) {
-			/* Mode: repeat-one */
-			if (strcmp(state.mode, "repeat-one") == 0) {
-				play_track(&state, state.current_track);
-				snprintf(state.message, sizeof(state.message),
-					 "Repeating track.");
-			}
-			/* Playlist playback logic */
-			else if (state.playing_playlist_index != -1) {
-				Playlist *pl = &state.playlists[state.playing_playlist_index];
+     * Automatic track advancement logic.
+     * This block is executed when a track finishes playing.
+     * It checks the current playback mode to decide what to do next.
+     */
+    if (state.current_track[0] != '\0' && !player_is_playing()) {
+      /* Mode: repeat-one */
+      if (strcmp(state.mode, "repeat-one") == 0) {
+        play_track(&state, state.current_track);
+        snprintf(state.message, sizeof(state.message), "Repeating track.");
+      }
+      /* Mode: shuffle */
+      else if (strcmp(state.mode, "shuffle") == 0) {
+        if (state.track_count > 0) {
+          int next_track_index = rand() % state.track_count;
+          play_track(&state, state.library[next_track_index].path);
+          snprintf(state.message, sizeof(state.message),
+                   "Shuffling to next track.");
+        }
+      }
+      /* Playlist playback logic */
+      else if (state.playing_playlist_index != -1) {
+        Playlist *pl = &state.playlists[state.playing_playlist_index];
 
-				/* Mode: repeat-all (for playlists) */
-				if (strcmp(state.mode, "repeat-all") == 0 &&
-				    state.playing_track_index_in_playlist >= pl->track_count - 1) {
-					state.playing_track_index_in_playlist = 0;
-				} else {
-					state.playing_track_index_in_playlist++;
-				}
+        /* Mode: repeat-all (for playlists) */
+        if (strcmp(state.mode, "repeat-all") == 0 &&
+            state.playing_track_index_in_playlist >= pl->track_count - 1) {
+          state.playing_track_index_in_playlist = 0;
+        } else {
+          state.playing_track_index_in_playlist++;
+        }
 
-				if (state.playing_track_index_in_playlist < pl->track_count) {
-					int lib_idx = pl->track_indices[state.playing_track_index_in_playlist];
-					if (lib_idx >= 0 && lib_idx < state.track_count) {
-						play_track(&state, state.library[lib_idx].path);
-						snprintf(state.message, sizeof(state.message),
-							 "Now playing next track in '%s'", pl->name);
-					} else {
-						/* Invalid index, stop playlist */
-						state.playing_playlist_index = -1;
-						state.current_track[0] = '\0';
-						state.track_duration = 0.0;
-						snprintf(state.message, sizeof(state.message),
-							 "Playlist '%s' finished (invalid index).", pl->name);
-					}
-				} else {
-					/* End of playlist and not repeating */
-					state.playing_playlist_index = -1;
-					state.current_track[0] = '\0';
-					state.track_duration = 0.0;
-					snprintf(state.message, sizeof(state.message),
-						 "Playlist '%s' finished.", pl->name);
-				}
-			}
-			/* Single track finished, no-repeat mode */
-			else {
-				state.current_track[0] = '\0';
-				state.track_duration = 0.0;
-				snprintf(state.message, sizeof(state.message),
-					 "Playback Finished.");
-			}
-		}
+        if (state.playing_track_index_in_playlist < pl->track_count) {
+          int lib_idx =
+              pl->track_indices[state.playing_track_index_in_playlist];
+          if (lib_idx >= 0 && lib_idx < state.track_count) {
+            play_track(&state, state.library[lib_idx].path);
+            snprintf(state.message, sizeof(state.message),
+                     "Now playing next track in '%s'", pl->name);
+          } else {
+            /* Invalid index, stop playlist */
+            state.playing_playlist_index = -1;
+            state.current_track[0] = '\0';
+            state.track_duration = 0.0;
+            snprintf(state.message, sizeof(state.message),
+                     "Playlist '%s' finished (invalid index).", pl->name);
+          }
+        } else {
+          /* End of playlist and not repeating */
+          state.playing_playlist_index = -1;
+          state.current_track[0] = '\0';
+          state.track_duration = 0.0;
+          snprintf(state.message, sizeof(state.message),
+                   "Playlist '%s' finished.", pl->name);
+        }
+      }
+      /* Single track finished, no-repeat mode */
+      else {
+        state.current_track[0] = '\0';
+        state.track_duration = 0.0;
+        snprintf(state.message, sizeof(state.message), "Playback Finished.");
+      }
+    }
   }
 
   /* Persist on exit */
@@ -393,9 +403,8 @@ static void draw_ui(AppState *state) {
     if ((int)strlen(temp_buffer) + 2 < cols)
       mvprintw(0, cols - (int)strlen(temp_buffer) - 2, "%s", temp_buffer);
   }
-    /* Display the current playback mode */
-    mvprintw(1, cols - (int)strlen(state->mode) - 8, "Mode: %s", state->mode);
-
+  /* Display the current playback mode */
+  mvprintw(1, cols - (int)strlen(state->mode) - 8, "Mode: %s", state->mode);
 
   mvprintw(2, 2, "Message: %s", state->message);
 
@@ -540,27 +549,63 @@ static void handle_command(AppState *state) {
 
   } else if (strcmp(command, "addfolder") == 0) {
     addfolder(state, argument);
+  } else if (strcmp(command, "webdownload") == 0) {
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: webdownload <track_name>");
+    } else {
+      char dl_command[1024];
+      char music_dir[512];
+      const char *home = getenv("HOME");
 
+      if (home) {
+        snprintf(music_dir, sizeof(music_dir), "%s/.config/LMP/music", home);
+        snprintf(dl_command, sizeof(dl_command),
+                 "spotdl download \"%s\" --output \"%s\"", argument, music_dir);
+
+        snprintf(state->message, sizeof(state->message),
+                 "Downloading '%s'... please wait.", argument);
+        draw_ui(state); /* Redraw UI to show the message */
+        refresh();
+
+        int result = system(dl_command);
+
+        if (result == 0) {
+          addfolder(state, music_dir); /* Re-use addfolder to scan and add */
+          snprintf(state->message, sizeof(state->message),
+                   "Finished downloading. '%s' added to library.", argument);
+        } else {
+          snprintf(state->message, sizeof(state->message),
+                   "Error downloading track. Is spotdl installed and "
+                   "configured correctly?");
+        }
+      } else {
+        snprintf(state->message, sizeof(state->message),
+                 "Could not find HOME directory.");
+      }
+    }
   } else if (strcmp(command, "help") == 0) {
-    const char *msg = "Help:\n" 
-                      "add \"<name>\" <path>      - Add track to library\n" 
-                      "addfolder <dir>          - Add all *.mp3 from dir " 
-                      "(name=file sans .mp3)\n" 
-                      "library / lib            - Show library & playlists\n" 
-                      "play <name>              - Play a track from library\n" 
-                      "pause                    - Toggle pause/resume\n" 
-                      "stop                     - Stop playback\n" 
-                      "volume                   - Show current volume\n" 
-                      "setvolume <0-100>        - Set the volume\n" 
-                      "setmode <mode>           - Set playback mode (no-repeat, repeat-one, repeat-all, shuffle)\n" 
-                      "listnew <name>           - Create a new playlist\n" 
-                      "createlist <name>        - Alias to listnew\n" 
+    const char *msg = "Help:\n"
+                      "add \"<name>\" <path>      - Add track to library\n"
+                      "addfolder <dir>          - Add all *.mp3 from dir "
+                      "(name=file sans .mp3)\n"
+                      "library / lib            - Show library & playlists\n"
+                      "play <name>              - Play a track from library\n"
+                      "pause                    - Toggle pause/resume\n"
+                      "stop                     - Stop playback\n"
+                      "volume                   - Show current volume\n"
+                      "setvolume <0-100>        - Set the volume\n"
+                      "setmode <mode>           - Set playback mode "
+                      "(no-repeat, repeat-one, repeat-all, shuffle)\n"
+                      "listnew <name>           - Create a new playlist\n"
+                      "createlist <name>        - Alias to listnew\n"
                       "listadd \"<pl>\" \"<track>\" - Add track to a playlist\n"
-                      "listaddmulti <pl> <id>.. - Add multiple tracks to playlist by ID from library.\n"
-                      "listview <name>          - View tracks in a playlist\n" 
-                      "listplay <name>          - Play a playlist\n" 
-                      "remove / rm <name>       - Remove track from library\n" 
-                      "author                   - Show authors\n" 
+                      "listaddmulti <pl> <id>.. - Add multiple tracks to "
+                      "playlist by ID from library.\n"
+                      "listview <name>          - View tracks in a playlist\n"
+                      "listplay <name>          - Play a playlist\n"
+                      "remove / rm <name>       - Remove track from library\n"
+                      "author                   - Show authors\n"
                       "quit                     - Exit the player";
     snprintf(state->message, sizeof(state->message), "%s", msg);
 
@@ -732,16 +777,16 @@ static void handle_command(AppState *state) {
 
   } else if (strcmp(command, "setmode") == 0) {
     if (!argument || *argument == '\0') {
-      snprintf(
-          state->message, sizeof(state->message),
-          "Usage: setmode <mode>\nValid modes are: no-repeat, repeat-one, repeat-all, shuffle.");
+      snprintf(state->message, sizeof(state->message),
+               "Usage: setmode <mode>\nValid modes are: no-repeat, repeat-one, "
+               "repeat-all, shuffle.");
     } else {
       if (strcasecmp(argument, "no-repeat") == 0 ||
           strcasecmp(argument, "repeat-one") == 0 ||
           strcasecmp(argument, "repeat-all") == 0 ||
           strcasecmp(argument, "shuffle") == 0) {
         strncpy(state->mode, argument, sizeof(state->mode) - 1);
-		state->mode[sizeof(state->mode) - 1] = '\0';
+        state->mode[sizeof(state->mode) - 1] = '\0';
         snprintf(state->message, sizeof(state->message), "Mode set to: %s",
                  argument);
       } else {
@@ -750,92 +795,91 @@ static void handle_command(AppState *state) {
       }
     }
   } else if (strcmp(command, "mode") == 0) {
-	sprintf(state->message, "Use setmode to change the playback mode.");
+    sprintf(state->message, "Use setmode to change the playback mode.");
   } else if (strcmp(command, "listaddmulti") == 0) {
-        char *pl_name;
-        char *token;
-        int pidx = -1;
-        int added_count = 0;
-        Playlist *pl;
+    char *pl_name;
+    char *token;
+    int pidx = -1;
+    int added_count = 0;
+    Playlist *pl;
 
-        if (!argument) {
-                snprintf(state->message, sizeof(state->message),
-                        "Usage: listaddmulti <playlist> <id1> <id2> ...");
-                return;
-        }
+    if (!argument) {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: listaddmulti <playlist> <id1> <id2> ...");
+      return;
+    }
 
-        /* The first token is the playlist name. */
-        pl_name = strtok(argument," ");
-        if (!pl_name) {
-                snprintf(state->message, sizeof(state->message),
-                        "Usage: listaddmulti <playlist> <id1> <id2> ...");
-                return;
-        }
+    /* The first token is the playlist name. */
+    pl_name = strtok(argument, " ");
+    if (!pl_name) {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: listaddmulti <playlist> <id1> <id2> ...");
+      return;
+    }
 
-        /* Find the playlist by its name. */
-        for (int i = 0; i < state->playlist_count; i++) {
-                if (strcmp(state->playlists[i].name, pl_name) == 0) {
-                        pidx = i;
-                        break;
-                }
-        }
+    /* Find the playlist by its name. */
+    for (int i = 0; i < state->playlist_count; i++) {
+      if (strcmp(state->playlists[i].name, pl_name) == 0) {
+        pidx = i;
+        break;
+      }
+    }
 
-        if (pidx == -1) {
-                snprintf(state->message, sizeof(state->message),
-                        "Error: Playlist '%s' not found.", pl_name);
-                return;
-        }
+    if (pidx == -1) {
+      snprintf(state->message, sizeof(state->message),
+               "Error: Playlist '%s' not found.", pl_name);
+      return;
+    }
 
-        pl = &state->playlists[pidx];
+    pl = &state->playlists[pidx];
 
+    /*
+     * Iterate over the remaining tokens, which are track IDs.
+     * strtokNULL, ...) continues tokenizing the same string.
+     */
+    while ((token = strtok(NULL, " ")) != NULL) {
+      int track_id = atoi(token);
+
+      /*
+       * Validate track ID. User-facing IDs ar1-based,
+       * but librararray is 0-based.
+       */
+      if (track_id <= 0 || track_id > state->track_count) {
         /*
-         * Iterate over the remaining tokens, which are track IDs.
-         * strtokNULL, ...) continues tokenizing the same string.
+         * Silently skip invalid IDs to allfor bulk operations
+         * where some IDs might be erroneous. A more verbose
+         * error could be added heif desired.
          */
-        while ((token = strtok(NULL, " ")) != NULL) {
-                int track_id = atoi(token);
+        continue;
+      }
 
-                /*
-                 * Validate track ID. User-facing IDs ar1-based,
-                 * but librararray is 0-based.
-                 */
-                if (track_id <= 0 || track_id > state->track_count) {
-                        /*
-                         * Silently skip invalid IDs to allfor bulk operations
-                         * where some IDs might be erroneous. A more verbose
-                         * error could be added heif desired.
-                         */
-                        continue;
-                }
+      if (pl->track_count >= 100) {
+        snprintf(state->message, sizeof(state->message),
+                 "Playlist '%s' is full. Added %d tracks.", pl->name,
+                 added_count);
+        /*
+         * Save config evif playlist becomes full,
+         * because some tracks might have been added.
+         */
+        if (added_count > 0)
+          config_save(state);
+        return;
+      }
 
-                if (pl->track_count >= 100) {
-                        snprintf(state->message, sizeof(state->message),
-                                "Playlist '%s' is full. Added %d tracks.",
-                                pl->name, added_count);
-                        /*
-                         * Save config evif playlist becomes full,
-                         * because some tracks might have been added.
-                         */
-                        if (added_count > 0)
-                                config_save(state);
-                        return;
-                }
+      /* Store the 0-based index. */
+      pl->track_indices[pl->track_count] = track_id - 1;
+      pl->track_count++;
+      added_count++;
+    }
 
-                /* Store the 0-based index. */
-                pl->track_indices[pl->track_count] = track_id - 1;
-                pl->track_count++;
-                added_count++;
-        }
-
-        if (added_count > 0) {
-                snprintf(state->message, sizeof(state->message),
-                        "Added %d tracks to playlist '%s'.",
-                        added_count, pl->name);
-                config_save(state);
-        } else {
-                snprintf(state->message, sizeof(state->message),
-                        "No valid tracks added. Check track IDs.");
-        }
+    if (added_count > 0) {
+      snprintf(state->message, sizeof(state->message),
+               "Added %d tracks to playlist '%s'.", added_count, pl->name);
+      config_save(state);
+    } else {
+      snprintf(state->message, sizeof(state->message),
+               "No valid tracks added. Check track IDs.");
+    }
   } else if (strcmp(command, "listnew") == 0 ||
              strcmp(command, "createlist") == 0) {
     if (!argument || *argument == '\0') {
