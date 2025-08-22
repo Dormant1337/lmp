@@ -1,3 +1,6 @@
+/* main.c - full file with addholder command, config integration, playlists */
+/* help prints multi-line into message using \n */
+
 #include <dirent.h>
 #include <errno.h>
 #include <ncurses.h>
@@ -161,11 +164,6 @@ static void play_track(AppState *state, const char *track_path) {
     strncpy(state->current_track, track_path, sizeof(state->current_track) - 1);
     state->current_track[sizeof(state->current_track) - 1] = '\0';
 
-    /*
-     * Find track in library by its full path to get the display name.
-     * This ensures that messages refer to the user-friendly name
-     * instead of the raw file path.
-     */
     for (i = 0; i < state->track_count; i++) {
       if (strcmp(state->library[i].path, state->current_track) == 0) {
         track_display_name = state->library[i].name;
@@ -173,10 +171,6 @@ static void play_track(AppState *state, const char *track_path) {
       }
     }
 
-    /*
-     * Fallback to the full path if, for some reason, the track
-     * being played is not in the library. This is a safeguard.
-     */
     if (!track_display_name)
       track_display_name = state->current_track;
 
@@ -206,12 +200,31 @@ int main(int argc, char *argv[]) {
   state.playing_track_index_in_playlist = 0;
   strncpy(state.mode, "no-repeat", sizeof(state.mode) - 1);
 
-  /* Pre-allocate minimal capacity so config_load() can populate arrays */
-  if (ensure_library_capacity(&state, 1) != 0 ||
-      ensure_playlists_capacity(&state, 1) != 0) {
+  /* Pre-allocate enough capacity for compatibility with old config_load()
+   * that assumes static arrays. */
+  if (ensure_library_capacity(&state, 100) != 0 ||
+      ensure_playlists_capacity(&state, 20) != 0) {
     fprintf(stderr, "Out of memory.\n");
     player_shutdown();
     return 1;
+  }
+
+  /* CRITICAL: pre-allocate track_indices for all playlist slots,
+   * so legacy config_load that writes into pl->track_indices[i]
+   * won't crash on NULL. */
+  for (int i = 0; i < state.playlists_cap; i++) {
+    if (!state.playlists[i].track_indices) {
+      state.playlists[i].track_indices =
+          (int *)malloc(100 * sizeof(int)); /* legacy cap */
+      if (!state.playlists[i].track_indices) {
+        fprintf(stderr, "Out of memory (playlist indices).\n");
+        player_shutdown();
+        return 1;
+      }
+      state.playlists[i].track_capacity = 100;
+      state.playlists[i].track_count = 0;
+      state.playlists[i].name[0] = '\0';
+    }
   }
 
   /* Load config (volume, library, playlists, last track) */
@@ -263,31 +276,29 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    /*
-     * Automatic track advancement logic.
-     * This block is executed when a track finishes playing.
-     * It checks the current playback mode to decide what to do next.
-     */
     if (state.current_track[0] != '\0' && !player_is_playing()) {
-      /* Mode: repeat-one */
       if (strcmp(state.mode, "repeat-one") == 0) {
         play_track(&state, state.current_track);
         snprintf(state.message, sizeof(state.message), "Repeating track.");
-      }
-      /* Mode: shuffle */
-      else if (strcmp(state.mode, "shuffle") == 0) {
+      } else if (strcmp(state.mode, "shuffle") == 0) {
         if (state.track_count > 0) {
           int next_track_index = rand() % state.track_count;
           play_track(&state, state.library[next_track_index].path);
           snprintf(state.message, sizeof(state.message),
                    "Shuffling to next track.");
         }
-      }
-      /* Playlist playback logic */
-      else if (state.playing_playlist_index != -1) {
+      } else if (state.playing_playlist_index != -1) {
         Playlist *pl = &state.playlists[state.playing_playlist_index];
 
-        /* Mode: repeat-all (for playlists) */
+        if (!pl->track_indices || pl->track_count <= 0) {
+          state.playing_playlist_index = -1;
+          state.current_track[0] = '\0';
+          state.track_duration = 0.0;
+          snprintf(state.message, sizeof(state.message),
+                   "Playlist finished or invalid.");
+          continue;
+        }
+
         if (strcmp(state.mode, "repeat-all") == 0 &&
             state.playing_track_index_in_playlist >= pl->track_count - 1) {
           state.playing_track_index_in_playlist = 0;
@@ -303,7 +314,6 @@ int main(int argc, char *argv[]) {
             snprintf(state.message, sizeof(state.message),
                      "Now playing next track in '%s'", pl->name);
           } else {
-            /* Invalid index, stop playlist */
             state.playing_playlist_index = -1;
             state.current_track[0] = '\0';
             state.track_duration = 0.0;
@@ -311,16 +321,13 @@ int main(int argc, char *argv[]) {
                      "Playlist '%s' finished (invalid index).", pl->name);
           }
         } else {
-          /* End of playlist and not repeating */
           state.playing_playlist_index = -1;
           state.current_track[0] = '\0';
           state.track_duration = 0.0;
           snprintf(state.message, sizeof(state.message),
                    "Playlist '%s' finished.", pl->name);
         }
-      }
-      /* Single track finished, no-repeat mode */
-      else {
+      } else {
         state.current_track[0] = '\0';
         state.track_duration = 0.0;
         snprintf(state.message, sizeof(state.message), "Playback Finished.");
@@ -366,11 +373,6 @@ static void draw_ui(AppState *state) {
     const char *track_display_name = NULL;
     int i;
 
-    /*
-     * Search the library for the current track's path to fetch
-     * its user-defined name. This is the core of showing a
-     * friendly name instead of a raw filename.
-     */
     for (i = 0; i < state->track_count; i++) {
       if (strcmp(state->library[i].path, state->current_track) == 0) {
         track_display_name = state->library[i].name;
@@ -378,11 +380,6 @@ static void draw_ui(AppState *state) {
       }
     }
 
-    /*
-     * Fallback to filename if the track is not in the library.
-     * This is a defensive measure. It extracts the filename
-     * from the full path.
-     */
     if (!track_display_name) {
       const char *filename = strrchr(state->current_track, '/');
       if (filename)
@@ -401,21 +398,13 @@ static void draw_ui(AppState *state) {
     strncat(temp_buffer, display_buffer,
             sizeof(temp_buffer) - strlen(temp_buffer) - 1);
 
-    /*
-     * Render the status line in the top-right corner.
-     * The position is calculated based on terminal width and
-     * the length of the generated string to ensure it is
-     * right-aligned.
-     */
     if ((int)strlen(temp_buffer) + 2 < cols)
       mvprintw(0, cols - (int)strlen(temp_buffer) - 2, "%s", temp_buffer);
   }
-  /* Display the current playback mode */
   mvprintw(1, cols - (int)strlen(state->mode) - 8, "Mode: %s", state->mode);
 
   mvprintw(2, 2, "Message: %s", state->message);
 
-  /* Progress bar */
   if (player_is_playing() && state->track_duration > 0) {
     double pos = player_get_current_position();
     double dur = state->track_duration;
@@ -478,13 +467,6 @@ static void handle_command(AppState *state) {
     while (*args == ' ')
       args++;
 
-    /*
-     * Argument parsing for the 'add' command.
-     * It supports two formats:
-     *   add "Track Name" /path/to/file.mp3
-     *   add TrackName /path/to/file.mp3
-     * This block handles the quoted name case first.
-     */
     if (*args == '"') {
       const char *name_start = args + 1;
       const char *name_end = strchr(name_start, '"');
@@ -506,7 +488,6 @@ static void handle_command(AppState *state) {
         }
       }
     } else {
-      /* This block handles the unquoted name case. */
       const char *name_start = args;
       const char *name_end = strchr(name_start, ' ');
 
@@ -558,7 +539,6 @@ static void handle_command(AppState *state) {
     snprintf(state->message, sizeof(state->message), "Added '%s' to library.",
              name);
 
-    /* Persist library */
     config_save(state);
 
   } else if (strcmp(command, "addfolder") == 0) {
@@ -579,13 +559,13 @@ static void handle_command(AppState *state) {
 
         snprintf(state->message, sizeof(state->message),
                  "Downloading '%s'... please wait.", argument);
-        draw_ui(state); /* Redraw UI to show the message */
+        draw_ui(state);
         refresh();
 
         int result = system(dl_command);
 
         if (result == 0) {
-          addfolder(state, music_dir); /* Re-use addfolder to scan and add */
+          addfolder(state, music_dir);
           snprintf(state->message, sizeof(state->message),
                    "Finished downloading. '%s' added to library.", argument);
         } else {
@@ -600,7 +580,7 @@ static void handle_command(AppState *state) {
     }
   } else if (strcmp(command, "help") == 0) {
     const char *msg = "Help:\n"
-                      "add \"<name>\" <path>      - Add track to library\n"
+                      "add \"<name>\" <path>       - Add track to library\n"
                       "addfolder <dir>           - Add all *.mp3 from dir (name=file sans .mp3)\n"
                       "webdownload <track_name>  - Download via spotdl into LMP and import\n"
                       "library / lib             - Show library & playlists\n"
@@ -612,7 +592,7 @@ static void handle_command(AppState *state) {
                       "setmode <mode>            - Set playback mode (no-repeat, repeat-one, repeat-all, shuffle)\n"
                       "listnew <name>            - Create a new playlist\n"
                       "createlist <name>         - Alias to listnew\n"
-                      "listadd \"<pl>\" \"<track>\" - Add track to a playlist\n"
+                      "listadd \"<pl>\" \"<track>\"  - Add track to a playlist\n"
                       "listaddmulti <pl> <id>..  - Add multiple tracks to playlist by ID from library.\n"
                       "listview <name>           - View tracks in a playlist\n"
                       "listplay <name>           - Play a playlist\n"
@@ -727,7 +707,6 @@ static void handle_command(AppState *state) {
         state->current_volume = v;
         player_set_volume(v);
         snprintf(state->message, sizeof(state->message), "Volume set to %d", v);
-        /* Persist volume */
         config_save(state);
       }
     }
@@ -753,28 +732,27 @@ static void handle_command(AppState *state) {
       if (idx == -1) {
         snprintf(state->message, sizeof(state->message), "Track not found...");
       } else {
-        /*
-         * Update playlists before removing a track from the library.
-         * This is critical. We must iterate through every playlist
-         * and adjust the indices of tracks.
-         */
         for (int p = 0; p < state->playlist_count; p++) {
           Playlist *pl = &state->playlists[p];
-          int w = 0; /* write index */
+          int w = 0;
+
+          if (!pl->track_indices || pl->track_count <= 0) {
+            pl->track_count = 0;
+            continue;
+          }
 
           for (int r = 0; r < pl->track_count; r++) {
             int t = pl->track_indices[r];
 
             if (t == idx)
-              continue; /* skip the track to be removed */
+              continue;
             if (t > idx)
-              t--; /* shift down indices of subsequent tracks */
+              t--;
             pl->track_indices[w++] = t;
           }
           pl->track_count = w;
         }
 
-        /* Now, remove the track from the library by shifting elements */
         for (i = idx; i < state->track_count - 1; i++)
           state->library[i] = state->library[i + 1];
         state->track_count--;
@@ -782,7 +760,6 @@ static void handle_command(AppState *state) {
         snprintf(state->message, sizeof(state->message), "Removed track: '%s'",
                  argument);
 
-        /* Persist library and playlists */
         config_save(state);
       }
     }
@@ -821,7 +798,6 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    /* The first token is the playlist name. */
     pl_name = strtok(argument, " ");
     if (!pl_name) {
       snprintf(state->message, sizeof(state->message),
@@ -829,7 +805,6 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    /* Find the playlist by its name. */
     for (int i = 0; i < state->playlist_count; i++) {
       if (strcmp(state->playlists[i].name, pl_name) == 0) {
         pidx = i;
@@ -845,32 +820,22 @@ static void handle_command(AppState *state) {
 
     pl = &state->playlists[pidx];
 
-    /*
-     * Iterate over the remaining tokens, which are track IDs.
-     * strtok(NULL, ...) continues tokenizing the same string.
-     */
     while ((token = strtok(NULL, " ")) != NULL) {
       int track_id = atoi(token);
 
-      /*
-       * Validate track ID. User-facing IDs are 1-based,
-       * but library array is 0-based.
-       */
       if (track_id <= 0 || track_id > state->track_count) {
-        /* Silently skip invalid IDs */
         continue;
       }
 
-      if (pl->track_count >= 100) {
+      if (ensure_playlist_tracks_capacity(pl, 1) != 0) {
         snprintf(state->message, sizeof(state->message),
-                 "Playlist '%s' is full. Added %d tracks.", pl->name,
-                 added_count);
+                 "Playlist '%s': cannot grow (out of memory). Added %d so far.",
+                 pl->name, added_count);
         if (added_count > 0)
           config_save(state);
         return;
       }
 
-      /* Store the 0-based index. */
       pl->track_indices[pl->track_count] = track_id - 1;
       pl->track_count++;
       added_count++;
@@ -909,15 +874,25 @@ static void handle_command(AppState *state) {
         } else {
           Playlist *pl = &state->playlists[state->playlist_count];
 
+          if (!pl->track_indices) {
+            pl->track_indices = (int *)malloc(100 * sizeof(int));
+            if (!pl->track_indices) {
+              snprintf(state->message, sizeof(state->message),
+                       "Out of memory (new playlist indices).");
+              return;
+            }
+            pl->track_capacity = 100;
+          }
+          pl->track_count = 0;
+
           strncpy(pl->name, argument, sizeof(pl->name) - 1);
           pl->name[sizeof(pl->name) - 1] = '\0';
-          pl->track_count = 0;
+
           state->playlist_count++;
 
           snprintf(state->message, sizeof(state->message),
                    "Created playlist '%s'.", argument);
 
-          /* Persist playlists */
           config_save(state);
         }
       }
@@ -931,11 +906,6 @@ static void handle_command(AppState *state) {
     while (*args == ' ')
       args++;
 
-    /*
-     * Argument parsing for 'listadd'.
-     * This is complex because both playlist and track names can
-     * be quoted to allow for spaces.
-     */
     if (*args == '"') {
       const char *start = args + 1;
       const char *end = strchr(start, '"');
@@ -967,7 +937,6 @@ static void handle_command(AppState *state) {
     while (*args == ' ')
       args++;
 
-    /* Parse track name (also supports quotes) */
     if (*args == '"') {
       const char *start = args + 1;
       const char *end = strchr(start, '"');
@@ -991,7 +960,6 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    /* Find playlist */
     int pidx = -1, tidx = -1;
 
     for (int i = 0; i < state->playlist_count; i++) {
@@ -1006,7 +974,6 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    /* Find track by name */
     for (int i = 0; i < state->track_count; i++) {
       if (strcmp(state->library[i].name, tr_name) == 0) {
         tidx = i;
@@ -1019,9 +986,10 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    if (state->playlists[pidx].track_count >= 100) {
+    if (ensure_playlist_tracks_capacity(&state->playlists[pidx], 1) != 0) {
       snprintf(state->message, sizeof(state->message),
-               "Error: Playlist '%s' is full.", state->playlists[pidx].name);
+               "Error: Playlist '%s' cannot grow (out of memory).",
+               state->playlists[pidx].name);
     } else {
       Playlist *pl = &state->playlists[pidx];
 
@@ -1031,7 +999,6 @@ static void handle_command(AppState *state) {
       snprintf(state->message, sizeof(state->message),
                "Added '%s' to playlist '%s'.", tr_name, pl_name);
 
-      /* Persist playlists */
       config_save(state);
     }
 
@@ -1064,7 +1031,7 @@ static void handle_command(AppState *state) {
       clear();
       mvprintw(0, 2, "--- Playlist: %s ---", pl->name);
 
-      if (pl->track_count == 0) {
+      if (!pl->track_indices || pl->track_count == 0) {
         mvprintw(line++, 4, "Empty.");
       } else {
         for (int i = 0; i < pl->track_count; i++) {
@@ -1113,7 +1080,8 @@ static void handle_command(AppState *state) {
       return;
     }
 
-    if (state->playlists[pidx].track_count == 0) {
+    if (!state->playlists[pidx].track_indices ||
+        state->playlists[pidx].track_count == 0) {
       snprintf(state->message, sizeof(state->message),
                "Error: Playlist '%s' is empty.", argument);
       return;

@@ -8,8 +8,9 @@ typedef struct Track {
 
 typedef struct Playlist {
 	char	name[50];
-	int	track_indices[100];
+	int	*track_indices;
 	int	track_count;
+	int	track_capacity;
 } Playlist;
 
 typedef struct AppState {

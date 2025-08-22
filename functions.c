@@ -17,6 +17,7 @@
 /* Initial capacities for dynamic arrays (backward-compatible defaults) */
 #define LMP_INIT_LIBRARY_CAP	100
 #define LMP_INIT_PLAYLISTS_CAP	20
+#define LMP_INIT_PL_TRACK_CAP	100
 
 /* =========================
  * Dynamic array helpers
@@ -80,23 +81,71 @@ int ensure_playlists_capacity(struct AppState *state, int additional)
 	if (!tmp)
 		return -1;
 
+	/* Zero-init only the newly added tail to keep fields sane */
+	if (newcap > (size_t)state->playlists_cap) {
+		size_t old = (size_t)state->playlists_cap;
+		memset(tmp + old, 0, (newcap - old) * sizeof(*tmp));
+	}
+
 	state->playlists = tmp;
 	state->playlists_cap = (int)newcap;
 	return 0;
 }
 
+int ensure_playlist_tracks_capacity(struct Playlist *pl, int additional)
+{
+	size_t need, newcap;
+	int *tmp;
+
+	if (!pl)
+		return -1;
+	if (additional < 0)
+		additional = 0;
+
+	if ((size_t)pl->track_capacity >=
+	    (size_t)pl->track_count + (size_t)additional)
+		return 0;
+
+	newcap = pl->track_capacity ? pl->track_capacity : LMP_INIT_PL_TRACK_CAP;
+	need = (size_t)pl->track_count + (size_t)additional;
+	while (newcap < need) {
+		if (newcap > SIZE_MAX / 2)
+			return -1;
+		newcap *= 2;
+	}
+
+	tmp = realloc(pl->track_indices, newcap * sizeof(*pl->track_indices));
+	if (!tmp)
+		return -1;
+
+	pl->track_indices = tmp;
+	pl->track_capacity = (int)newcap;
+	return 0;
+}
+
 void free_app_state(struct AppState *state)
 {
+	int i;
+
 	if (!state)
 		return;
+
+	for (i = 0; i < state->playlists_cap; i++) {
+		free(state->playlists[i].track_indices);
+		state->playlists[i].track_indices = NULL;
+		state->playlists[i].track_capacity = 0;
+		state->playlists[i].track_count = 0;
+	}
 
 	free(state->playlists);
 	state->playlists = NULL;
 	state->playlists_cap = 0;
+	state->playlist_count = 0;
 
 	free(state->library);
 	state->library = NULL;
 	state->library_cap = 0;
+	state->track_count = 0;
 }
 
 /* =========================
@@ -185,11 +234,9 @@ void player_pause_toggle(void)
 	if (Mix_PlayingMusic() || Mix_PausedMusic()) {
 		if (Mix_PausedMusic()) {
 			Mix_ResumeMusic();
-			/* Adjust start time to account for the time spent paused */
 			g_start_ticks = SDL_GetTicks() - g_paused_ticks;
 			g_paused_ticks = 0;
 		} else {
-			/* Record how long the music has been playing */
 			g_paused_ticks = SDL_GetTicks() - g_start_ticks;
 			Mix_PauseMusic();
 		}
@@ -349,13 +396,6 @@ static int track_path_exists(const AppState *state, const char *path)
 
 /**
  * addfolder() - add all *.mp3 files from a directory into library.
- * @state:	app state pointer
- * @dirpath:	target directory path (no recursion)
- *
- * - Track name is file name without ".mp3" (case-insensitive).
- * - Skips duplicates by name or by path.
- * - Respects dynamic library capacity (auto-grow).
- * - Writes a summary to state->message and saves config on completion.
  */
 void addfolder(AppState *state, const char *dirpath)
 {
@@ -395,7 +435,6 @@ void addfolder(AppState *state, const char *dirpath)
 			continue;
 		}
 
-		/* Ensure we have space for one more track */
 		if (ensure_library_capacity(state, 1) != 0) {
 			/* ENOMEM or overflow */
 			skipped_cap++;
@@ -429,7 +468,6 @@ void addfolder(AppState *state, const char *dirpath)
 	}
 	closedir(dir);
 
-	/* Persist library changes */
 	config_save(state);
 
 	snprintf(state->message, sizeof(state->message),
