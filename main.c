@@ -1,8 +1,8 @@
 /* main.c - full file with addholder command, config integration, playlists */
 /* help prints multi-line into message using \n */
 
+#include <ctype.h>
 #include <dirent.h>
-#include <errno.h>
 #include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,82 +73,7 @@ static int track_path_exists(const AppState *state, const char *path) {
   return 0;
 }
 
-static void cmd_addholder(AppState *state, const char *dirpath) {
-  DIR *dir;
-  struct dirent *de;
-  int added = 0, skipped_exists = 0, skipped_cap = 0, skipped_invalid = 0;
 
-  if (!dirpath || !*dirpath) {
-    snprintf(state->message, sizeof(state->message),
-             "Usage: addholder <directory_path>");
-    return;
-  }
-
-  dir = opendir(dirpath);
-  if (!dir) {
-    snprintf(state->message, sizeof(state->message),
-             "addholder: cannot open '%s': %s", dirpath, strerror(errno));
-    return;
-  }
-
-  while ((de = readdir(dir)) != NULL) {
-    char fullpath[512];
-    struct stat st;
-    char track_name[50];
-
-    if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
-      continue;
-
-    if (!has_mp3_ext(de->d_name))
-      continue;
-
-    join_path(fullpath, sizeof(fullpath), dirpath, de->d_name);
-
-    if (stat(fullpath, &st) != 0 || !S_ISREG(st.st_mode)) {
-      skipped_invalid++;
-      continue;
-    }
-
-    /* Ensure we have space for one more track */
-    if (ensure_library_capacity(state, 1) != 0) {
-      skipped_cap++;
-      break; /* allocation failed */
-    }
-
-    strip_mp3_ext(de->d_name, track_name, sizeof(track_name));
-    if (track_name[0] == '\0') {
-      skipped_invalid++;
-      continue;
-    }
-
-    if (track_name_exists(state, track_name) ||
-        track_path_exists(state, fullpath)) {
-      skipped_exists++;
-      continue;
-    }
-
-    strncpy(state->library[state->track_count].name, track_name,
-            sizeof(state->library[state->track_count].name) - 1);
-    state->library[state->track_count]
-        .name[sizeof(state->library[state->track_count].name) - 1] = '\0';
-
-    strncpy(state->library[state->track_count].path, fullpath,
-            sizeof(state->library[state->track_count].path) - 1);
-    state->library[state->track_count]
-        .path[sizeof(state->library[state->track_count].path) - 1] = '\0';
-
-    state->track_count++;
-    added++;
-  }
-  closedir(dir);
-
-  /* Persist library changes */
-  config_save(state);
-
-  snprintf(state->message, sizeof(state->message),
-           "addholder: added %d, skipped (exists %d, alloc_fail %d, invalid %d)",
-           added, skipped_exists, skipped_cap, skipped_invalid);
-}
 
 static void play_track(AppState *state, const char *track_path) {
   if (access(track_path, F_OK) != 0) {
@@ -462,7 +387,14 @@ static void handle_command(AppState *state) {
   if (strcmp(command, "add") == 0) {
     char name[50] = {0};
     char path[256] = {0};
-    const char *args = state->command_buffer + strlen(command);
+
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message), "Usage: add <track_name> <file_path>");
+      return;
+    }
+
+
+    const char *args = argument;
 
     while (*args == ' ')
       args++;
@@ -549,25 +481,50 @@ static void handle_command(AppState *state) {
                "Usage: webdownload <track_name>");
     } else {
       char dl_command[1024];
-      char music_dir[512];
+      char download_target_dir[512];
+      char safe_argument[256];
       const char *home = getenv("HOME");
 
+      int j = 0;
+      for (int i = 0; argument[i] != '\0' && j < sizeof(safe_argument) - 1; i++) {
+        if (isalnum((unsigned char)argument[i]) || isspace((unsigned char)argument[i]) ||
+                argument[i] == '-' || argument[i] == '_' || argument[i] == '.') {
+                safe_argument[j++] = argument[i];
+            }
+      }
+      safe_argument[j] = '\0';
+
+      if (safe_argument[0] == '\0') {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: webdownload <track_name>");
+      return;
+      }
+
       if (home) {
-        snprintf(music_dir, sizeof(music_dir), "%s/.config/LMP/music", home);
+        snprintf(download_target_dir, sizeof(download_target_dir), "%s/LMP/downloads", home);
+
+      {
+        char tmp_path[512];
+        snprintf(tmp_path, sizeof(tmp_path), "%s/LMP", home); mkdir(tmp_path, 0755);
+        snprintf(tmp_path, sizeof(tmp_path), "%s/LMP/downloads", home); mkdir(tmp_path, 0755);
+        mkdir(download_target_dir, 0755);
+      }
         snprintf(dl_command, sizeof(dl_command),
-                 "spotdl download \"%s\" --output \"%s\"", argument, music_dir);
+                 "spotdl download \"%s\" --output \"%s\"", safe_argument, download_target_dir);
 
         snprintf(state->message, sizeof(state->message),
-                 "Downloading '%s'... please wait.", argument);
+                 "Downloading '%s'... please wait.", safe_argument);
         draw_ui(state);
         refresh();
 
+        fprintf(stderr, "DEBUG: Executing command: %s\n", dl_command);
+        
         int result = system(dl_command);
 
         if (result == 0) {
-          addfolder(state, music_dir);
+          addfolder(state, download_target_dir);
           snprintf(state->message, sizeof(state->message),
-                   "Finished downloading. '%s' added to library.", argument);
+                   "Finished downloading. '%s' added to library.", safe_argument);
         } else {
           snprintf(state->message, sizeof(state->message),
                    "Error downloading track. Is spotdl installed and "
@@ -901,7 +858,15 @@ static void handle_command(AppState *state) {
   } else if (strcmp(command, "listadd") == 0) {
     char pl_name[50] = {0};
     char tr_name[50] = {0};
-    const char *args = state->command_buffer + strlen(command);
+
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message),
+    "Error: No playlist name given.");
+    return;
+    }
+
+
+    const char *args = argument;
 
     while (*args == ' ')
       args++;
