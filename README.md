@@ -12,7 +12,11 @@ The following libraries and utilities are required to build and run `lmp`:
 *   **ncurses**, **SDL2**, **SDL2_mixer**, **mpg123**, **cJSON** (included in source).
 
 ### External Utilities (for `webdownload` command)
-*   **spotdl** (`pip install spotdl` or `pipx install spotdl`), **yt-dlp** (update via `yt-dlp -U`), **ffmpeg**.
+
+*   **spotdl** (`yay -S spotdl` or `pip install spotdl` or `pipx install spotdl`)  
+*   **yt-dlp** (install via `sudo pacman -S yt-dlp`, update via `yt-dlp -U`)  
+*   **ffmpeg** (`sudo pacman -S ffmpeg`)
+
 
 ## Building
 
