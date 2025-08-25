@@ -806,6 +806,139 @@ static void handle_command(AppState *state) {
       snprintf(state->message, sizeof(state->message),
                "No valid tracks added. Check track IDs.");
     }
+  } else if (strcmp(command, "listremove") == 0 || strcmp(command, "listrem") == 0) {
+    char pl_name[50] = {0};
+    char *track_idx_str;
+    const char *args = argument;
+    int pidx = -1;
+    int track_idx_to_remove = -1;
+
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message), "Usage: listremove <playlist_name> <index>");
+      return;
+    }
+    
+    if (*args == '"') {
+      const char *start = args + 1;
+      const char *end = strchr(start, '"');
+      if (end) {
+        size_t len = end - start;
+        if (len > sizeof(pl_name) - 1) len = sizeof(pl_name) - 1;
+        strncpy(pl_name, start, len);
+        pl_name[len] = '\0';
+        args = end + 1;
+      }
+    } else {
+      const char *start = args;
+      const char *end = strchr(start, ' ');
+      if (end) {
+        size_t len = end - start;
+        if (len > sizeof(pl_name) - 1) len = sizeof(pl_name) - 1;
+        strncpy(pl_name, start, len);
+        pl_name[len] = '\0';
+        args = end;
+      }
+    }
+
+    while (*args == ' ') {
+      args++;
+    }
+    track_idx_str = (char *)args;
+
+    if (pl_name[0] == '\0' || track_idx_str[0] == '\0') {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: listremove <playlist_name> <index>");
+      return;
+    }
+
+    for (int i = 0; i < state->playlist_count; i++) {
+      if (strcmp(state->playlists[i].name, pl_name) == 0) {
+        pidx = i;
+        break;
+      }
+    }
+
+    if (pidx == -1) {
+      snprintf(state->message, sizeof(state->message),
+               "Playlist '%s' not found.", pl_name);
+      return;
+    }
+
+    track_idx_to_remove = atoi(track_idx_str);
+    Playlist *pl = &state->playlists[pidx];
+
+    if (track_idx_to_remove <= 0 || track_idx_to_remove > pl->track_count) {
+      snprintf(state->message, sizeof(state->message),
+               "Error: Invalid track index %d for playlist '%s'. (1-%d)",
+               track_idx_to_remove, pl->name, pl->track_count);
+      return;
+    }
+
+    for (int i = track_idx_to_remove - 1; i < pl->track_count - 1; i++) {
+      pl->track_indices[i] = pl->track_indices[i + 1];
+    }
+    pl->track_count--;
+
+    if (state->playing_playlist_index == pidx &&
+        state->playing_track_index_in_playlist >= track_idx_to_remove - 1) {
+      if (state->playing_track_index_in_playlist >= pl->track_count) {
+        state->playing_track_index_in_playlist = pl->track_count > 0 ? pl->track_count - 1 : 0;
+        if (pl->track_count == 0) {
+            player_stop();
+            state->playing_playlist_index = -1;
+            state->current_track[0] = '\0';
+            state->track_duration = 0.0;
+        }
+      }
+    }
+    snprintf(state->message, sizeof(state->message),
+             "Removed track at index %d from playlist '%s'.",
+             track_idx_to_remove, pl->name);
+    config_save(state);
+} else if (strcmp(command, "deletelist") == 0) { 
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message),
+               "Usage: deletelist <playlist_name>");
+      return;
+    }
+
+    int pidx = -1;
+    for (int i = 0; i < state->playlist_count; i++) {
+      if (strcmp(state->playlists[i].name, argument) == 0) {
+        pidx = i;
+        break;
+      }
+    }
+
+    if (pidx == -1) {
+      snprintf(state->message, sizeof(state->message),
+               "Error: Playlist '%s' not found.", argument);
+      return;
+    }
+
+    free(state->playlists[pidx].track_indices);
+    state->playlists[pidx].track_indices = NULL;
+    state->playlists[pidx].track_capacity = 0;
+    state->playlists[pidx].track_count = 0;
+
+    for (int i = pidx; i < state->playlist_count - 1; i++) {
+      state->playlists[i] = state->playlists[i + 1];
+    }
+    state->playlist_count--;
+
+    if (state->playing_playlist_index == pidx) {
+        player_stop();
+        state->playing_playlist_index = -1;
+        state->current_track[0] = '\0';
+        state->track_duration = 0.0;
+    } else if (state->playing_playlist_index > pidx) {
+        state->playing_playlist_index--;
+    }
+
+    snprintf(state->message, sizeof(state->message),
+             "Playlist '%s' deleted.", argument);
+    config_save(state);
+
   } else if (strcmp(command, "listnew") == 0 ||
              strcmp(command, "createlist") == 0) {
     if (!argument || *argument == '\0') {
