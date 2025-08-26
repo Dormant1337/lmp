@@ -394,6 +394,21 @@ static int track_path_exists(const AppState *state, const char *path)
 	return 0;
 }
 
+/* Function that removes spaces from a string. */
+static void remove_spaces(char *str) {
+	char *write_ptr = str;
+	char *read_ptr = str;
+
+	while (*read_ptr) {
+		if (*read_ptr != ' ') {
+			*write_ptr = *read_ptr;
+			write_ptr++;
+		}
+		read_ptr++;
+	}
+	*write_ptr = '\0';
+}
+
 /**
  * addfolder() - add all *.mp3 files from a directory into library.
  */
@@ -452,6 +467,8 @@ void addfolder(AppState *state, const char *dirpath)
 			skipped_exists++;
 			continue;
 		}
+
+		remove_spaces(track_name);
 
 		strncpy(state->library[state->track_count].name, track_name,
 			sizeof(state->library[state->track_count].name) - 1);
