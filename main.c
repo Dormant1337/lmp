@@ -538,6 +538,8 @@ static void handle_command(AppState *state) {
   } else if (strcmp(command, "help") == 0) {
     const char *msg = "Help:\n"
                       "add \"<name>\" <path>       - Add track to library\n"
+                      "rename <index> <new_name> - Rename a track in library by its index\n"
+                      "remove / rm <name>        - Remove track from library\n"
                       "addfolder <dir>           - Add all *.mp3 from dir (name=file sans .mp3)\n"
                       "webdownload <track_name>  - Download via spotdl into LMP and import\n"
                       "library / lib             - Show library & playlists\n"
@@ -555,7 +557,6 @@ static void handle_command(AppState *state) {
                       "listaddmulti <pl> <id>..  - Add multiple tracks to playlist by ID from library.\n"
                       "listview <name>           - View tracks in a playlist\n"
                       "listplay <name>           - Play a playlist\n"
-                      "remove / rm <name>        - Remove track from library\n"
                       "author                    - Show authors\n"
                       "quit                      - Exit the player";
     snprintf(state->message, sizeof(state->message), "%s", msg);
