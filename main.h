@@ -1,6 +1,8 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+
+
 typedef struct Track {
 	char	name[50];
 	char	path[256];
@@ -32,5 +34,8 @@ typedef struct AppState {
 	int	 playing_playlist_index;
 	int	 playing_track_index_in_playlist;
 } AppState;
+
+void draw_ui(AppState *state);
+void play_track(AppState *state, const char *track_path);
 
 #endif /* MAIN_H */

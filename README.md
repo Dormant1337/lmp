@@ -20,4 +20,4 @@ The following libraries and utilities are required to build and run `lmp`:
 
 ## Building
 
-    gcc main.c functions.c config.c cJSON.c -o lmplayer -lncurses -lSDL2 -lSDL2_mixer -lmpg123
+    gcc main.c functions.c config.c cJSON.c handle_command.c -o lmplayer -lncurses -lSDL2 -lSDL2_mixer -lmpg123
