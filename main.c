@@ -600,6 +600,44 @@ static void handle_command(AppState *state) {
     snprintf(state->message, sizeof(state->message),
              "Returned from library view.");
 
+  } else if (strcmp(command, "rename") == 0) {
+    if (!argument || *argument == '\0') {
+      snprintf(state->message, sizeof(state->message), "Usage: rename <track_index> <new_name>");
+      return;
+    }
+
+    char *index_str = strtok(argument, " ");
+    char *new_name_arg = strtok(NULL, " ");
+
+    if (!index_str || !new_name_arg) {
+      snprintf(state->message, sizeof(state->message), "Usage: rename <track_index> <new_name>");
+      return;
+    }
+
+    char *endptr;
+    long idx_long = strtol(index_str, &endptr, 10);
+
+    if (*endptr != '\0' || idx_long <= 0 || idx_long > state->track_count) {
+      snprintf(state->message, sizeof(state->message), "Error: Invalid track index. Must be 1-%d.", state->track_count);
+      return;
+    }
+    int track_index = (int)idx_long - 1;
+
+    if (strlen(new_name_arg) >= sizeof(state->library[track_index].name)) {
+      snprintf(state->message, sizeof(state->message), "Error: New name '%s' is too long (max %zu chars).", new_name_arg, sizeof(state->library[track_index].name) - 1);
+      return;
+    }
+
+    char old_name[sizeof(state->library[track_index].name)];
+    strncpy(old_name, state->library[track_index].name, sizeof(old_name) - 1);
+    old_name[sizeof(old_name) - 1] = '\0';
+
+    strncpy(state->library[track_index].name, new_name_arg, sizeof(state->library[track_index].name) - 1);
+    state->library[track_index].name[sizeof(state->library[track_index].name) - 1] = '\0';
+
+    snprintf(state->message, sizeof(state->message), "Renamed track '%s' to '%s'.", old_name, new_name_arg);
+    config_save(state); 
+
   } else if (strcmp(command, "quit") == 0) {
     state->is_running = 0;
 
