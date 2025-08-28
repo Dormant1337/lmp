@@ -13,6 +13,7 @@
 #define CONFIG_PATH_MAX		512
 #define VOLUME_MIN		0
 #define VOLUME_MAX		100
+#define MAX_CONFIG_SIZE		(10 * 1024 * 1024)  /* 10MB max config */
 
 static void ensure_dir_exists(void)
 {
@@ -194,7 +195,7 @@ static void load_last_track(cJSON *root, AppState *state)
 	}
 }
 
-static void load_library(cJSON *root, AppState *state)
+static int load_library(cJSON *root, AppState *state)
 {
 	cJSON *lib, *t, *nm, *pth;
 	int i, n;
@@ -203,11 +204,15 @@ static void load_library(cJSON *root, AppState *state)
 	state->track_count = 0;
 
 	if (!cJSON_IsArray(lib))
-		return;
+		return 0;
 
 	n = cJSON_GetArraySize(lib);
-	if (n > 100)
-		n = 100;
+	if (n <= 0)
+		return 0;
+
+	/* Dynamically expand library to fit all tracks */
+	if (ensure_library_capacity(state, n) != 0)
+		return -1;
 
 	for (i = 0; i < n; i++) {
 		t = cJSON_GetArrayItem(lib, i);
@@ -236,9 +241,11 @@ static void load_library(cJSON *root, AppState *state)
 
 		state->track_count++;
 	}
+
+	return 0;
 }
 
-static void load_playlists(cJSON *root, AppState *state)
+static int load_playlists(cJSON *root, AppState *state)
 {
 	cJSON *pls, *pl, *nm, *tr_arr, *tn;
 	int i, j, n, m, idx;
@@ -248,11 +255,14 @@ static void load_playlists(cJSON *root, AppState *state)
 	state->playlist_count = 0;
 
 	if (!cJSON_IsArray(pls))
-		return;
+		return 0;
 
 	n = cJSON_GetArraySize(pls);
-	if (n > 20)
-		n = 20;
+	if (n <= 0)
+		return 0;
+
+	if (ensure_playlists_capacity(state, n) != 0)
+		return -1;
 
 	for (i = 0; i < n; i++) {
 		pl = cJSON_GetArrayItem(pls, i);
@@ -273,10 +283,11 @@ static void load_playlists(cJSON *root, AppState *state)
 		tr_arr = cJSON_GetObjectItem(pl, "tracks");
 		if (cJSON_IsArray(tr_arr)) {
 			m = cJSON_GetArraySize(tr_arr);
-			if (m > 100)
-				m = 100;
+			
+			if (m > 0 && ensure_playlist_tracks_capacity(current_pl, m) != 0)
+				continue;
 
-			for (j = 0; j < m && current_pl->track_count < 100; j++) {
+			for (j = 0; j < m; j++) {
 				tn = cJSON_GetArrayItem(tr_arr, j);
 				if (!cJSON_IsString(tn) || !tn->valuestring)
 					continue;
@@ -291,6 +302,8 @@ static void load_playlists(cJSON *root, AppState *state)
 
 		state->playlist_count++;
 	}
+
+	return 0;
 }
 
 void config_load(AppState *state)
@@ -315,7 +328,7 @@ void config_load(AppState *state)
 		goto cleanup;
 
 	sz = ftell(fp);
-	if (sz <= 0 || sz > 5 * 1024 * 1024)  /* Max 5MB config file */
+	if (sz <= 0 || sz > MAX_CONFIG_SIZE)
 		goto cleanup;
 
 	if (fseek(fp, 0, SEEK_SET) != 0)
@@ -337,8 +350,12 @@ void config_load(AppState *state)
 
 	load_volume(root, state);
 	load_last_track(root, state);
-	load_library(root, state);
-	load_playlists(root, state);
+	
+	if (load_library(root, state) != 0)
+		goto cleanup;
+	
+	if (load_playlists(root, state) != 0)
+		goto cleanup;
 
 cleanup:
 	cJSON_Delete(root);
