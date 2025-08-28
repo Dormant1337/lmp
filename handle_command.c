@@ -178,6 +178,7 @@ void cmd_help(AppState *state, const char *argument) {
                       "addfolder <dir>           - Add all *.mp3 from dir (name=file sans .mp3)\n"
                       "webdownload <track_name>  - Download via spotdl into LMP and import\n"
                       "library / lib             - Show library & playlists\n"
+                      "search <promt>           - Search for tracks in library\n"
                       "play <name>               - Play a track from library\n"
                       "pause                     - Toggle pause/resume\n"
                       "stop                      - Stop playback\n"
