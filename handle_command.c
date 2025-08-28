@@ -905,3 +905,58 @@ void cmd_stop(AppState *state) {
     snprintf(state->message, sizeof(state->message), "Playback stopped.");
 
 }
+
+void cmd_search(AppState *state, const char *argument) {
+  if (!argument || *argument == '\0') {
+        snprintf(state->message, sizeof(state->message), "Usage: search <query>");
+        return;
+    }
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+    clear();
+    mvprintw(0, 2, "--- Search Results for '%s' ---", argument);
+
+    int line = 2;
+    int found_count = 0;
+    char query_lower[256];
+    char track_name_lower[256];
+    int i;
+
+    for (i = 0; argument[i] && i < sizeof(query_lower) - 1; i++) {
+        query_lower[i] = tolower((unsigned char)argument[i]);
+    }
+    query_lower[i] = '\0';
+
+    for (i = 0; i < state->track_count; i++) {
+        int j;
+        for (j = 0; state->library[i].name[j] && j < sizeof(track_name_lower) - 1; j++) {
+            track_name_lower[j] = tolower((unsigned char)state->library[i].name[j]);
+        }
+        track_name_lower[j] = '\0';
+
+        if (strstr(track_name_lower, query_lower)) {
+            found_count++;
+            if (line >= rows - 2) {
+                mvprintw(line, 4, "...");
+                break; 
+            }
+            mvprintw(line++, 4, "%d: %s", i + 1, state->library[i].name);
+        }
+    }
+
+    if (found_count == 0) {
+        mvprintw(line, 4, "No tracks found matching '%s'.", argument);
+    }
+
+    attron(A_REVERSE);
+    mvprintw(rows - 1, 0, "Press any key to return");
+    attroff(A_REVERSE);
+    refresh();
+
+    timeout(-1); 
+    getch();
+    timeout(100); 
+
+    snprintf(state->message, sizeof(state->message), "Returned from search.");
+}

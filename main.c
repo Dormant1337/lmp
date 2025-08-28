@@ -402,6 +402,7 @@ static void handle_command(AppState *state) {
   } else if (strcmp(command, "listview") == 0) {       cmd_listview(state, argument);
   } else if (strcmp(command, "listplay") == 0) {       cmd_listplay(state, argument);
   } else if (strcmp(command, "stop") == 0) {           cmd_stop(state);
+  } else if (strcmp(command, "search") == 0) {         cmd_search(state, argument);
   //          //          //          //          //          //          //          //          //          //
   } else if (strcmp(command, "quit") == 0) {   state->is_running = 0;
   } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) { cmd_remove(state,argument);

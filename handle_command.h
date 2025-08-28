@@ -28,5 +28,5 @@ void cmd_listadd(AppState *state, const char *argument);
 void cmd_listview(AppState *state, const char *argument);
 void cmd_listplay(AppState *state, const char *argument);
 void cmd_stop(AppState *state);
-
+void cmd_search(AppState *state, const char *argument);
 #endif 
