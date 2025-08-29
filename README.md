@@ -40,8 +40,9 @@ You can also press `q` to quickly exit the player.
 ## Contributing
 
 Contributions are welcome! Feel free to open issues or submit pull requests.
+Please ensure that all contributions adhere to the project's existing code style and architectural principles.
 
 ## Authors
 
 *   **dormant1337:** [https://github.com/Zer0Flux86](https://github.com/Zer0Flux86)
-*   **Syn4pse:** [https://github.com/BoLIIIoi](https://github.com/BoLIIIoi)```
+*   **Syn4pse:** [https://github.com/BoLIIIoi](https://github.com/BoLIIIoi)
