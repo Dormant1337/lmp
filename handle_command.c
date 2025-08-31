@@ -193,6 +193,7 @@ void cmd_help(AppState *state, const char *argument) {
                       "listaddmulti <pl> <id>..  - Add multiple tracks to playlist by ID from library.\n"
                       "listview <name>           - View tracks in a playlist\n"
                       "listplay <name>           - Play a playlist\n"
+                      "next                      - Skips current track in playlist"
                       "author                    - Show authors\n"
                       "quit                      - Exit the player";
     snprintf(state->message, sizeof(state->message), "%s", msg);
