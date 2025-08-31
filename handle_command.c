@@ -962,3 +962,70 @@ void cmd_search(AppState *state, const char *argument) {
 
     snprintf(state->message, sizeof(state->message), "Returned from search.");
 }
+
+
+void cmd_next(AppState *state) {
+    if (state->playing_playlist_index != -1) {
+        Playlist *pl = &state->playlists[state->playing_playlist_index];
+
+        if (!pl->track_indices || pl->track_count <= 0) {
+            player_stop();
+            state->playing_playlist_index = -1;
+            state->current_track[0] = '\0';
+            state->track_duration = 0.0;
+            snprintf(state->message, sizeof(state->message), "Current playlist is empty or invalid. Playback stopped.");
+            return;
+        }
+
+        if (strcmp(state->mode, "repeat-all") == 0 &&
+            state->playing_track_index_in_playlist >= pl->track_count - 1) {
+            state->playing_track_index_in_playlist = 0;
+        } else {
+            state->playing_track_index_in_playlist++; 
+        }
+
+        if (state->playing_track_index_in_playlist < pl->track_count) {
+            int lib_idx = pl->track_indices[state->playing_track_index_in_playlist];
+            if (lib_idx >= 0 && lib_idx < state->track_count) {
+                play_track(state, state->library[lib_idx].path);
+                snprintf(state->message, sizeof(state->message), "Skipped to next track in '%s'.", pl->name);
+            } else {
+                player_stop();
+                state->playing_playlist_index = -1;
+                state->current_track[0] = '\0';
+                state->track_duration = 0.0;
+                snprintf(state->message, sizeof(state->message), "Playlist '%s' finished (invalid index). Playback stopped.", pl->name);
+            }
+        } else {
+            player_stop();
+            state->playing_playlist_index = -1;
+            state->current_track[0] = '\0';
+            state->track_duration = 0.0;
+            snprintf(state->message, sizeof(state->message), "Playlist '%s' finished. Playback stopped.", pl->name);
+        }
+    }
+    else if (strcmp(state->mode, "shuffle") == 0 || strcmp(state->mode, "repeat-all") == 0) {
+        if (state->track_count > 0) {
+            int next_track_index;
+            if (strcmp(state->mode, "shuffle") == 0) {
+                next_track_index = rand() % state->track_count;
+                snprintf(state->message, sizeof(state->message), "Shuffling to next track.");
+            } else { 
+                next_track_index = (rand() % state->track_count); 
+                snprintf(state->message, sizeof(state->message), "Skipped to next track.");
+            }
+            play_track(state, state->library[next_track_index].path);
+        } else {
+            player_stop();
+            state->current_track[0] = '\0';
+            state->track_duration = 0.0;
+            snprintf(state->message, sizeof(state->message), "Library is empty. Playback stopped.");
+        }
+    }
+    else {
+        player_stop();
+        state->current_track[0] = '\0';
+        state->track_duration = 0.0;
+        snprintf(state->message, sizeof(state->message), "Playback skipped. No next track available.");
+    }
+}
