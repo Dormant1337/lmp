@@ -15,6 +15,7 @@
 #include "config.h"
 #include "functions.h"
 #include "main.h"
+#include <locale.h>
 
 /* Prototypes */
 static void handle_command(AppState *state);
@@ -117,6 +118,9 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Failed to initialize the audio player. Exiting.\n");
     return 1;
   }
+
+  setlocale(LC_ALL, "");
+  initscr();
 
   /* Defaults before load */
   state.current_volume = 100;
