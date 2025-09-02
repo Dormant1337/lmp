@@ -18,15 +18,21 @@ The following libraries and utilities are required to build and run `lmp`:
 *   **yt-dlp** (install via `sudo pacman -S yt-dlp`, update via `yt-dlp -U`)
 *   **ffmpeg** (`sudo pacman -S ffmpeg`)
 
-## Building
+## Building on arch through aur:
 
-    gcc main.c functions.c config.c cJSON.c handle_command.c -o lmplayer -lncurses -lSDL2 -lSDL2_mixer -lmpg123
+    yay -S lmplayer
+
+# Building on other os:
+    git clone https://github.com/Zer0Flux86/lmp
+    cd lmp
+    sudo make install
+    lmplayer
 
 ## Usage
 
-Start the player by running the compiled executable:
+Start the player by running:
 
-    ./lmplayer
+    lmplayer
 
 Press `:` to enter command mode, then type `help` to see a list of available commands.
 You can also press `q` to quickly exit the player.
