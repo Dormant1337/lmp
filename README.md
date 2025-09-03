@@ -18,7 +18,7 @@ The following libraries and utilities are required to build and run `lmp`:
 *   **yt-dlp** (install via `sudo pacman -S yt-dlp`, update via `yt-dlp -U`)
 *   **ffmpeg** (`sudo pacman -S ffmpeg`)
 
-## Building on arch through aur:
+## Building on Arch Linux through aur:
 
     yay -S lmplayer
 
