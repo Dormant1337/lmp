@@ -25,7 +25,7 @@ The following libraries and utilities are required to build and run `lmp`:
 # Building on other os:
     git clone https://github.com/Zer0Flux86/lmp
     cd lmp
-    make install
+    sudo make install
     lmplayer
 
 ## Usage
