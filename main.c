@@ -146,7 +146,7 @@ int main(int argc, char *argv[]) {
       state.playlists[i].track_indices =
           (int *)malloc(100 * sizeof(int)); /* legacy cap */
       if (!state.playlists[i].track_indices) {
-        fprintf(stderr, "Out of memory (playlist indices).\n");
+        fprintf(stderr, "Out of memory (3playlist indices).\n");
         player_shutdown();
         return 1;
       }
@@ -408,7 +408,7 @@ static void handle_command(AppState *state) {
   } else if (strcmp(command, "stop") == 0) {           cmd_stop(state);
   } else if (strcmp(command, "search") == 0) {         cmd_search(state, argument);
   } else if (strcmp(command, "next") == 0) {           cmd_next(state);
-  } else if (strcmp(command, "skip") == 0) {           cmd_next(state);
+  } else if (strcmp(command, "skip") == 0) {           cmd_skip(state);
   //          //          //          //          //          //          //          //          //          //
   } else if (strcmp(command, "quit") == 0) {   state->is_running = 0;
   } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) { cmd_remove(state,argument);

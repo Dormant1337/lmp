@@ -491,3 +491,4 @@ void addfolder(AppState *state, const char *dirpath)
 		 "addfolder: added %d, skipped (exists %d, alloc_fail %d, invalid %d)",
 		 added, skipped_exists, skipped_cap, skipped_invalid);
 }
+
